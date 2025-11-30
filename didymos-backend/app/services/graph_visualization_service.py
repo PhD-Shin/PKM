@@ -300,27 +300,34 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         MATCH (v)-[:HAS_NOTE]->(n:Note)
         WITH n LIMIT $limit
         OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
-        WITH COLLECT(DISTINCT n) AS notes, COLLECT(DISTINCT entity) AS entities, COLLECT(DISTINCT r) AS rels
+        WHERE entity IS NOT NULL
 
-        // 노드 변환
+        WITH n, COLLECT(DISTINCT entity) AS entities, COLLECT(DISTINCT r) AS rels
+
+        // 노드 수집
+        WITH COLLECT(DISTINCT n) AS allNotes,
+             REDUCE(s = [], x IN COLLECT(entities) | s + x) AS allEntities,
+             REDUCE(s = [], x IN COLLECT(rels) | s + x) AS allRels
+
+        // 노트 노드 변환
         WITH
-            [node IN notes | {{
+            [node IN allNotes | {{
                 id: node.note_id,
                 label: node.title,
                 type: 'Note',
                 properties: properties(node)
-            }}] +
-            [entity IN entities WHERE entity IS NOT NULL | {{
+            }}] AS noteNodes,
+            [entity IN allEntities WHERE entity IS NOT NULL | {{
                 id: entity.id,
                 label: entity.id,
                 type: labels(entity)[0],
                 properties: properties(entity)
-            }}] AS allNodes,
-            rels
+            }}] AS entityNodes,
+            allRels
 
         // 관계 변환
-        WITH allNodes,
-            [rel IN rels WHERE rel IS NOT NULL | {{
+        WITH noteNodes + entityNodes AS allNodes,
+            [rel IN allRels WHERE rel IS NOT NULL | {{
                 from: startNode(rel).note_id,
                 to: endNode(rel).id,
                 type: type(rel),

@@ -25,7 +25,8 @@
       "Bash(git remote:*)",
       "Bash(cat:*)",
       "Bash(python3:*)",
-      "Bash(zip:*)"
+      "Bash(zip:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
