@@ -291,35 +291,52 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
     try:
         client = get_neo4j_client()
 
-        # 극도로 단순화: 노트만 반환
-        cypher = """
+        # Use the same pattern as get_all_notes which works
+        cypher_notes = """
         MATCH (n:Note)
-        WITH n LIMIT $limit
-        RETURN COLLECT({
-            id: n.note_id,
-            label: n.title,
-            type: 'Note',
-            properties: properties(n)
-        }) AS nodes,
-        [] AS edges
+        RETURN n.note_id AS note_id, n.title AS title
+        LIMIT $limit
         """
 
-        params = {
-            "user_id": user_id,
-            "limit": limit
-        }
-        if vault_id:
-            params["vault_id"] = vault_id
+        note_results = client.query(cypher_notes, {"limit": limit})
 
-        logger.info(f"Querying vault graph for user_id={user_id}, vault_id={vault_id}, limit={limit}")
-        results = client.query(cypher, params)
-        logger.info(f"Query returned {len(results) if results else 0} results")
-
-        if not results or len(results) == 0:
-            logger.warning(f"No graph data found for user: {user_id}")
+        if not note_results:
+            logger.warning(f"No notes found")
             return {"nodes": [], "edges": []}
 
-        result = results[0]
+        # Now get the graph for these notes
+        note_ids = [r["note_id"] for r in note_results]
+
+        cypher_graph = """
+        MATCH (n:Note)
+        WHERE n.note_id IN $note_ids
+        OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
+        RETURN COLLECT(DISTINCT {
+                   id: n.note_id,
+                   label: n.title,
+                   type: 'Note',
+                   properties: properties(n)
+               }) +
+               [e IN COLLECT(DISTINCT entity) WHERE e IS NOT NULL | {
+                   id: e.id,
+                   label: e.id,
+                   type: labels(e)[0],
+                   properties: properties(e)
+               }] AS nodes,
+               [rel IN COLLECT(DISTINCT r) WHERE rel IS NOT NULL | {
+                   from: startNode(rel).note_id,
+                   to: endNode(rel).id,
+                   type: type(rel),
+                   label: type(rel)
+               }] AS edges
+        """
+
+        graph_results = client.query(cypher_graph, {"note_ids": note_ids})
+
+        if not graph_results or len(graph_results) == 0:
+            return {"nodes": [], "edges": []}
+
+        result = graph_results[0]
         nodes = result.get("nodes", [])
         edges = result.get("edges", [])
 
