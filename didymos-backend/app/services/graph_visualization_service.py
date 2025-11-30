@@ -300,42 +300,36 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         {vault_condition}
         MATCH (v)-[:HAS_NOTE]->(n:Note)
         WITH n LIMIT $limit
-        OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
 
-        WITH COLLECT(DISTINCT n) AS allNotes,
-             COLLECT(DISTINCT entity) AS allEntities,
-             COLLECT(DISTINCT r) AS allRels
-
-        UNWIND allNotes AS note
-        WITH note, allEntities, allRels
-        WITH COLLECT({{
-            id: note.note_id,
-            label: note.title,
+        // 노트만 먼저 수집
+        WITH COLLECT(DISTINCT {{
+            id: n.note_id,
+            label: n.title,
             type: 'Note',
-            properties: properties(note)
-        }}) AS noteNodes, allEntities, allRels
+            properties: properties(n)
+        }}) AS noteNodes,
+        COLLECT(n) AS notes
 
-        UNWIND allEntities AS entity
-        WHERE entity IS NOT NULL
-        WITH noteNodes, entity, allRels
-        WITH noteNodes, COLLECT({{
-            id: entity.id,
-            label: entity.id,
-            type: labels(entity)[0],
-            properties: properties(entity)
-        }}) AS entityNodes, allRels
+        // 엔티티와 관계 조회
+        UNWIND notes AS note
+        OPTIONAL MATCH (note)-[r:MENTIONS]->(entity)
+        WITH noteNodes,
+             COLLECT(DISTINCT entity) AS entities,
+             COLLECT(DISTINCT r) AS rels
 
-        UNWIND allRels AS rel
-        WHERE rel IS NOT NULL
-        WITH noteNodes, entityNodes, rel
-        WITH noteNodes, entityNodes, COLLECT({{
-            from: startNode(rel).note_id,
-            to: endNode(rel).id,
-            type: type(rel),
-            label: type(rel)
-        }}) AS edges
-
-        RETURN noteNodes, entityNodes, edges
+        RETURN noteNodes,
+               [e IN entities WHERE e IS NOT NULL | {{
+                   id: e.id,
+                   label: e.id,
+                   type: labels(e)[0],
+                   properties: properties(e)
+               }}] AS entityNodes,
+               [rel IN rels WHERE rel IS NOT NULL | {{
+                   from: startNode(rel).note_id,
+                   to: endNode(rel).id,
+                   type: type(rel),
+                   label: type(rel)
+               }}] AS edges
         """
 
         params = {
