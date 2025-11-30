@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  didymos-api:
+    build: .
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    # Neo4j AuraDB 를 사용하므로 별도 DB 컨테이너는 포함하지 않습니다.

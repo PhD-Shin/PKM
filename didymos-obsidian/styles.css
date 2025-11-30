@@ -1,0 +1,418 @@
+/* Didymos Context Panel */
+.didymos-context-container {
+  padding: 16px;
+}
+
+.didymos-context-header h2 {
+  margin: 0 0 16px 0;
+  font-size: 1.5em;
+}
+
+.didymos-empty-message {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.didymos-loading {
+  text-align: center;
+  padding: 20px;
+  color: var(--text-muted);
+}
+
+.didymos-error {
+  color: var(--text-error);
+  padding: 12px;
+  background-color: var(--background-modifier-error);
+  border-radius: 4px;
+}
+
+/* Section */
+.didymos-section {
+  margin-bottom: 24px;
+}
+
+.didymos-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 1.1em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 8px;
+}
+
+.didymos-section ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.didymos-section li {
+  padding: 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Topics */
+.didymos-topic-name {
+  flex: 1;
+}
+
+.didymos-topic-score {
+  font-weight: bold;
+  color: var(--interactive-accent);
+}
+
+.didymos-topic-count {
+  color: var(--text-muted);
+  font-size: 0.9em;
+}
+
+/* Projects */
+.didymos-project-name {
+  flex: 1;
+}
+
+.didymos-project-status {
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 500;
+}
+
+.didymos-project-status.status-active {
+  background-color: var(--color-green);
+  color: white;
+}
+
+.didymos-project-status.status-paused {
+  background-color: var(--color-yellow);
+  color: black;
+}
+
+.didymos-project-status.status-done {
+  background-color: var(--text-muted);
+  color: white;
+}
+
+/* Tasks */
+.didymos-task-checkbox {
+  margin: 0;
+}
+
+.didymos-task-title {
+  flex: 1;
+}
+
+.didymos-task-priority {
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.75em;
+  font-weight: bold;
+}
+
+.didymos-task-priority.priority-high {
+  background-color: var(--color-red);
+  color: white;
+}
+
+.didymos-task-priority.priority-medium {
+  background-color: var(--color-orange);
+  color: white;
+}
+
+.didymos-task-priority.priority-low {
+  background-color: var(--text-muted);
+  color: white;
+}
+
+/* Related Notes */
+.didymos-related-number {
+  color: var(--text-muted);
+  font-weight: bold;
+  min-width: 20px;
+}
+
+.didymos-related-link {
+  flex: 1;
+  cursor: pointer;
+  color: var(--link-color);
+  text-decoration: none;
+}
+
+.didymos-related-link:hover {
+  text-decoration: underline;
+}
+
+.didymos-related-similarity {
+  color: var(--text-accent);
+  font-weight: bold;
+  font-size: 0.9em;
+}
+
+/* Graph Panel */
+.didymos-graph-container {
+  padding: 16px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.didymos-graph-header h2 {
+  margin: 0 0 12px 0;
+  font-size: 1.5em;
+}
+
+.didymos-graph-controls {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.didymos-hop-select {
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.didymos-graph-toggles {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.didymos-graph-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.9em;
+}
+
+.didymos-graph-presets {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.didymos-graph-select {
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.didymos-graph-network {
+  flex: 1;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background-color: var(--background-secondary);
+  position: relative;
+}
+
+.didymos-graph-empty,
+.didymos-graph-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.didymos-graph-error {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--text-error);
+  background-color: var(--background-modifier-error);
+  padding: 16px;
+  border-radius: 8px;
+  max-width: 80%;
+  text-align: center;
+}
+
+/* Task Panel */
+.didymos-task-container {
+  padding: 16px;
+}
+
+.didymos-task-header h2 {
+  margin: 0 0 16px 0;
+}
+
+.didymos-task-controls {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.didymos-task-controls select,
+.didymos-task-controls button {
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.didymos-task-list {
+  min-height: 200px;
+}
+
+.didymos-task-loading,
+.didymos-task-empty {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+}
+
+.didymos-task-error {
+  color: var(--text-error);
+  background-color: var(--background-modifier-error);
+  padding: 16px;
+  border-radius: 8px;
+}
+
+.didymos-task-group {
+  margin-bottom: 24px;
+}
+
+.didymos-task-group h3 {
+  margin: 0 0 12px 0;
+  font-size: 1.1em;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 8px;
+}
+
+.didymos-task-group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.didymos-task-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 4px;
+}
+
+.didymos-task-item:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.didymos-task-checkbox {
+  margin: 0;
+  cursor: pointer;
+}
+
+.didymos-task-title {
+  flex: 1;
+}
+
+.didymos-task-note-link {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.didymos-task-note-link:hover {
+  color: var(--link-color);
+}
+
+/* Review Panel */
+.didymos-review-container {
+  padding: 16px;
+}
+
+.didymos-review-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.didymos-review-actions button {
+  padding: 6px 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.didymos-review-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.didymos-review-section {
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 12px;
+  background-color: var(--background-secondary);
+}
+
+.didymos-review-section h3 {
+  margin: 0 0 8px 0;
+}
+
+.didymos-review-section ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.didymos-review-empty {
+  color: var(--text-muted);
+}
+
+.didymos-review-error {
+  color: var(--text-error);
+  background-color: var(--background-modifier-error);
+  padding: 12px;
+  border-radius: 6px;
+}
+
+.didymos-review-history ul {
+  margin: 0;
+  padding-left: 16px;
+}
+.didymos-chat-box {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background-color: var(--background-secondary);
+}
+.didymos-chat-input {
+  padding: 6px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  width: 240px;
+}
+.didymos-chat-response {
+  margin-top: 8px;
+  padding: 8px;
+  min-height: 40px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+  white-space: pre-wrap;
+}
+.didymos-chat-suggest {
+  cursor: pointer;
+  color: var(--link-color);
+  text-decoration: none;
+}
+.didymos-chat-suggest:hover {
+  text-decoration: underline;
+}

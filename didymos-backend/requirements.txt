@@ -1,0 +1,23 @@
+# Core Framework
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+pydantic==2.9.0
+pydantic-settings==2.5.0
+python-dotenv==1.0.1
+
+# LangChain Ecosystem (Py3.9 호환 버전 자동 선택)
+langchain
+langchain-core
+langchain-community
+langchain-openai
+langchain-neo4j
+langchain-experimental
+langchain-text-splitters
+langgraph
+
+# Database
+neo4j>=5.16.0
+
+# Utils
+httpx>=0.27.0
+tiktoken>=0.8.0

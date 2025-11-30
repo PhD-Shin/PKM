@@ -1,0 +1,11 @@
+{
+  "id": "didymos-pkm",
+  "name": "Didymos PKM",
+  "version": "0.1.0",
+  "minAppVersion": "0.15.0",
+  "description": "Personal Knowledge Management with AI-powered graph extraction and Neo4j backend",
+  "author": "Your Name",
+  "authorUrl": "https://github.com/yourusername/didymos-pkm",
+  "isDesktopOnly": false,
+  "css": "styles.css"
+}

@@ -1,0 +1,33 @@
+{
+  "name": "didymos-pkm",
+  "version": "0.1.0",
+  "description": "Personal Knowledge Management with AI-powered graph extraction",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "package": "npm run build && rm -rf dist && mkdir -p dist && cp main.js manifest.json styles.css dist/ && cd dist && zip -r didymos-pkm.zip main.js manifest.json styles.css",
+    "version": "node version-bump.mjs && git add manifest.json versions.json"
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "pkm",
+    "knowledge-graph"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.19.8",
+    "obsidian": "latest",
+    "tslib": "^2.6.2",
+    "typescript": "^5.3.2"
+  },
+  "dependencies": {
+    "vis-network": "^10.0.2"
+  }
+}

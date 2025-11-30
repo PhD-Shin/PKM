@@ -1,0 +1,15 @@
+{
+  "user_token": "test_user_001",
+  "vault_id": "test_vault_001",
+  "note": {
+    "note_id": "test/my-first-note.md",
+    "title": "My First Note",
+    "path": "test/my-first-note.md",
+    "content": "This is my first test note for Didymos PKM.",
+    "yaml": {},
+    "tags": ["test", "first"],
+    "links": [],
+    "created_at": "2025-11-30T01:00:00Z",
+    "updated_at": "2025-11-30T01:30:00Z"
+  }
+}
