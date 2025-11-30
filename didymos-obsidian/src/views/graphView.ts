@@ -157,6 +157,21 @@ export class DidymosGraphView extends ItemView {
       text: "노트를 저장하면 그래프가 표시됩니다.",
       cls: "didymos-graph-empty",
     });
+
+    // 현재 활성 노트로 그래프 초기화
+    const active = this.app.workspace.getActiveFile();
+    if (active) {
+      await this.renderGraph(active.path);
+    }
+
+    // 파일 전환 시 그래프 갱신
+    this.registerEvent(
+      this.app.workspace.on("file-open", async (file) => {
+        if (file) {
+          await this.renderGraph(file.path);
+        }
+      })
+    );
   }
 
   async renderGraph(noteId: string) {
