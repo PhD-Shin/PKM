@@ -292,45 +292,15 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         client = get_neo4j_client()
 
         # Vault 조건 추가
-        vault_condition = "AND v.id = $vault_id" if vault_id else ""
+        vault_condition = "WHERE v.id = $vault_id" if vault_id else ""
 
-        cypher = f"""
+        # 단계 1: 노트 조회
+        note_query = f"""
         MATCH (u:User {{id: $user_id}})-[:OWNS]->(v:Vault)
         {vault_condition}
         MATCH (v)-[:HAS_NOTE]->(n:Note)
-        WITH n LIMIT $limit
-        OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
-
-        WITH n,
-             COLLECT(DISTINCT entity) AS entities,
-             COLLECT(DISTINCT r) AS rels
-
-        // 노트 노드 변환
-        WITH COLLECT({{
-                id: n.note_id,
-                label: n.title,
-                type: 'Note',
-                properties: properties(n)
-            }}) AS noteNodes,
-            REDUCE(s = [], x IN COLLECT(entities) | s + [e IN x WHERE e IS NOT NULL | {{
-                id: e.id,
-                label: e.id,
-                type: labels(e)[0],
-                properties: properties(e)
-            }}]) AS entityNodesList,
-            REDUCE(s = [], x IN COLLECT(rels) | s + [rel IN x WHERE rel IS NOT NULL | {{
-                from: startNode(rel).note_id,
-                to: endNode(rel).id,
-                type: type(rel),
-                label: type(rel)
-            }}]) AS allEdges
-
-        // Flatten entity nodes
-        WITH noteNodes,
-             REDUCE(s = [], x IN entityNodesList | s + x) AS entityNodes,
-             allEdges
-
-        RETURN noteNodes + entityNodes AS nodes, allEdges AS edges
+        RETURN n.note_id AS note_id, n.title AS title
+        LIMIT $limit
         """
 
         params = {
@@ -341,21 +311,67 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
             params["vault_id"] = vault_id
 
         logger.info(f"Querying vault graph for user_id={user_id}, vault_id={vault_id}, limit={limit}")
-        results = client.query(cypher, params)
-        logger.info(f"Query returned {len(results) if results else 0} results")
+        note_results = client.query(note_query, params)
+        logger.info(f"Found {len(note_results) if note_results else 0} notes")
 
-        if not results or len(results) == 0:
-            logger.warning(f"No graph data found for user: {user_id}")
+        if not note_results:
+            logger.warning(f"No notes found for user: {user_id}")
             return {"nodes": [], "edges": []}
 
-        result = results[0]
-        nodes = result.get("nodes", [])
-        edges = result.get("edges", [])
-        logger.info(f"Found {len(nodes)} nodes and {len(edges)} edges")
+        # 각 노트의 ID 수집
+        note_ids = [r["note_id"] for r in note_results]
+
+        # 단계 2: 모든 노트와 엔티티를 한번에 조회
+        graph_query = """
+        MATCH (n:Note)
+        WHERE n.note_id IN $note_ids
+        OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
+        RETURN n, COLLECT(DISTINCT entity) AS entities, COLLECT(DISTINCT r) AS rels
+        """
+
+        graph_results = client.query(graph_query, {"note_ids": note_ids})
+
+        all_nodes = []
+        all_edges = []
+
+        for row in graph_results:
+            note = row["n"]
+            entities = row["entities"]
+            rels = row["rels"]
+
+            # 노트 노드 추가
+            all_nodes.append({
+                "id": note["note_id"],
+                "label": note["title"],
+                "type": "Note",
+                "properties": dict(note)
+            })
+
+            # 엔티티 노드 추가
+            for entity in entities:
+                if entity is not None:
+                    all_nodes.append({
+                        "id": entity.get("id", "unknown"),
+                        "label": entity.get("id", "unknown"),
+                        "type": list(entity.labels)[0] if hasattr(entity, 'labels') else "Entity",
+                        "properties": dict(entity) if entity else {}
+                    })
+
+            # 엣지 추가
+            for rel in rels:
+                if rel is not None:
+                    all_edges.append({
+                        "from": note["note_id"],
+                        "to": rel.end_node.get("id", "unknown"),
+                        "type": rel.type,
+                        "label": rel.type
+                    })
+
+        logger.info(f"Found {len(all_nodes)} nodes and {len(all_edges)} edges")
 
         return {
-            "nodes": nodes,
-            "edges": edges
+            "nodes": all_nodes,
+            "edges": all_edges
         }
 
     except Exception as e:
