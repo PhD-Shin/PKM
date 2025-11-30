@@ -9,10 +9,11 @@
 ### 1.1 핵심 가치
 **Didymos**는 Obsidian 노트를 기반으로 자동으로 지식 그래프를 구축하고, AI가 노트 간 연결을 발견하여 생산성을 극대화하는 시스템입니다.
 
-### 1.2 기술 스택
+### 1.2 기술 스택 / 배포
 - **백엔드**: FastAPI + Neo4j AuraDB + OpenAI
 - **프론트엔드**: Obsidian 플러그인 (TypeScript)
 - **AI**: neo4j-genai + GPT-4
+- **배포**: Railway (Dockerfile 자동 감지, prod 도메인: `https://didymos-backend-production.up.railway.app`)
 
 ---
 

@@ -15,9 +15,9 @@
 - ✅ Phase 5: Graph Panel (5/5)
 - ✅ Phase 6: Task 관리 (4/4)
 - ✅ Phase 7: Weekly Review (4/4)
-- 🔄 Phase 8: 배포 (9/13)
+- 🔄 Phase 8: 배포 (10/14) - Railway 프로덕션 배포 완료
 
-**전체 진행률**: 44/48 (92%)
+**전체 진행률**: 45/49 (92%)
 
 ---
 
@@ -109,7 +109,8 @@
 - [ ] 프리미엄/요금제 UX (리얼타임/쿨다운 안내, 폴더별 배치 제한)
 - [x] Render 배포 설정 파일 작성 (render.yaml)
 - [x] Aura CLI 설정 완료 (credential 추가, 인스턴스 연결 확인)
-- [ ] Render 프로젝트 생성 및 배포
+- [x] Railway 배포 (prod) 완료, 도메인: https://didymos-backend-production.up.railway.app
+- [ ] Render 프로젝트 생성 및 배포 (옵션, 필요 시)
 - [ ] Fly.io 배포 플랜: 멀티 리전·프라이빗 네트워크 구성, 퍼시스턴트 볼륨/배포 스크립트 정리
 
 ---
