@@ -291,36 +291,17 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
     try:
         client = get_neo4j_client()
 
-        # 먼저 가장 단순한 쿼리로 시작 - vault 없이
+        # 극도로 단순화: 노트만 반환
         cypher = """
         MATCH (n:Note)
-        WITH n LIMIT $limit
-
-        OPTIONAL MATCH (n)-[r]-(connected)
-
-        WITH COLLECT(DISTINCT n) AS notes,
-             COLLECT(DISTINCT connected) AS connectedNodes,
-             COLLECT(DISTINCT r) AS allRels
-
-        RETURN
-            [note IN notes | {
-                id: note.note_id,
-                label: note.title,
-                type: 'Note',
-                properties: properties(note)
-            }] +
-            [node IN connectedNodes WHERE node IS NOT NULL | {
-                id: COALESCE(node.id, node.note_id, 'unknown'),
-                label: COALESCE(node.id, node.title, labels(node)[0]),
-                type: labels(node)[0],
-                properties: properties(node)
-            }] AS nodes,
-            [rel IN allRels WHERE rel IS NOT NULL | {
-                from: COALESCE(startNode(rel).note_id, startNode(rel).id),
-                to: COALESCE(endNode(rel).note_id, endNode(rel).id),
-                type: type(rel),
-                label: type(rel)
-            }] AS edges
+        RETURN COLLECT({
+            id: n.note_id,
+            label: n.title,
+            type: 'Note',
+            properties: properties(n)
+        }) AS nodes,
+        [] AS edges
+        LIMIT $limit
         """
 
         params = {
