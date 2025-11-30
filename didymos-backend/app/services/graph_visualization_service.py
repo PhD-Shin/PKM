@@ -300,41 +300,37 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         MATCH (v)-[:HAS_NOTE]->(n:Note)
         WITH n LIMIT $limit
         OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
-        WHERE entity IS NOT NULL
 
-        WITH n, COLLECT(DISTINCT entity) AS entities, COLLECT(DISTINCT r) AS rels
-
-        // 노드 수집
-        WITH COLLECT(DISTINCT n) AS allNotes,
-             REDUCE(s = [], x IN COLLECT(entities) | s + x) AS allEntities,
-             REDUCE(s = [], x IN COLLECT(rels) | s + x) AS allRels
+        WITH n,
+             COLLECT(DISTINCT entity) AS entities,
+             COLLECT(DISTINCT r) AS rels
 
         // 노트 노드 변환
-        WITH
-            [node IN allNotes | {{
-                id: node.note_id,
-                label: node.title,
+        WITH COLLECT({{
+                id: n.note_id,
+                label: n.title,
                 type: 'Note',
-                properties: properties(node)
-            }}] AS noteNodes,
-            [entity IN allEntities WHERE entity IS NOT NULL | {{
-                id: entity.id,
-                label: entity.id,
-                type: labels(entity)[0],
-                properties: properties(entity)
-            }}] AS entityNodes,
-            allRels
-
-        // 관계 변환
-        WITH noteNodes + entityNodes AS allNodes,
-            [rel IN allRels WHERE rel IS NOT NULL | {{
+                properties: properties(n)
+            }}) AS noteNodes,
+            REDUCE(s = [], x IN COLLECT(entities) | s + [e IN x WHERE e IS NOT NULL | {{
+                id: e.id,
+                label: e.id,
+                type: labels(e)[0],
+                properties: properties(e)
+            }}]) AS entityNodesList,
+            REDUCE(s = [], x IN COLLECT(rels) | s + [rel IN x WHERE rel IS NOT NULL | {{
                 from: startNode(rel).note_id,
                 to: endNode(rel).id,
                 type: type(rel),
                 label: type(rel)
-            }}] AS allEdges
+            }}]) AS allEdges
 
-        RETURN allNodes AS nodes, allEdges AS edges
+        // Flatten entity nodes
+        WITH noteNodes,
+             REDUCE(s = [], x IN entityNodesList | s + x) AS entityNodes,
+             allEdges
+
+        RETURN noteNodes + entityNodes AS nodes, allEdges AS edges
         """
 
         params = {
@@ -344,20 +340,26 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         if vault_id:
             params["vault_id"] = vault_id
 
+        logger.info(f"Querying vault graph for user_id={user_id}, vault_id={vault_id}, limit={limit}")
         results = client.query(cypher, params)
+        logger.info(f"Query returned {len(results) if results else 0} results")
 
         if not results or len(results) == 0:
             logger.warning(f"No graph data found for user: {user_id}")
             return {"nodes": [], "edges": []}
 
         result = results[0]
+        nodes = result.get("nodes", [])
+        edges = result.get("edges", [])
+        logger.info(f"Found {len(nodes)} nodes and {len(edges)} edges")
+
         return {
-            "nodes": result.get("nodes", []),
-            "edges": result.get("edges", [])
+            "nodes": nodes,
+            "edges": edges
         }
 
     except Exception as e:
-        logger.error(f"Error getting user graph: {e}")
+        logger.error(f"Error getting user graph: {e}", exc_info=True)
         return {"nodes": [], "edges": []}
 
 
