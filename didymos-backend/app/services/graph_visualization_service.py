@@ -294,6 +294,7 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         # 극도로 단순화: 노트만 반환
         cypher = """
         MATCH (n:Note)
+        WITH n LIMIT $limit
         RETURN COLLECT({
             id: n.note_id,
             label: n.title,
@@ -301,7 +302,6 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
             properties: properties(n)
         }) AS nodes,
         [] AS edges
-        LIMIT $limit
         """
 
         params = {
