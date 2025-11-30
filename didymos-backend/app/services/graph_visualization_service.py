@@ -301,38 +301,41 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         MATCH (v)-[:HAS_NOTE]->(n:Note)
         WITH n LIMIT $limit
         OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
-        WHERE entity IS NOT NULL
 
-        WITH n, COLLECT(DISTINCT entity) AS entities, COLLECT(DISTINCT r) AS rels
+        WITH COLLECT(DISTINCT n) AS allNotes,
+             COLLECT(DISTINCT entity) AS allEntities,
+             COLLECT(DISTINCT r) AS allRels
 
-        RETURN COLLECT(DISTINCT {{
-            id: n.note_id,
-            label: n.title,
+        UNWIND allNotes AS note
+        WITH note, allEntities, allRels
+        WITH COLLECT({{
+            id: note.note_id,
+            label: note.title,
             type: 'Note',
-            properties: properties(n)
-        }}) AS noteNodes,
-        REDUCE(s = [], entity IN REDUCE(acc = [], x IN COLLECT(entities) | acc + x) |
-            CASE WHEN entity IS NOT NULL
-            THEN s + [{{
-                id: entity.id,
-                label: entity.id,
-                type: labels(entity)[0],
-                properties: properties(entity)
-            }}]
-            ELSE s
-            END
-        ) AS entityNodes,
-        REDUCE(s = [], rel IN REDUCE(acc = [], x IN COLLECT(rels) | acc + x) |
-            CASE WHEN rel IS NOT NULL
-            THEN s + [{{
-                from: startNode(rel).note_id,
-                to: endNode(rel).id,
-                type: type(rel),
-                label: type(rel)
-            }}]
-            ELSE s
-            END
-        ) AS allEdges
+            properties: properties(note)
+        }}) AS noteNodes, allEntities, allRels
+
+        UNWIND allEntities AS entity
+        WHERE entity IS NOT NULL
+        WITH noteNodes, entity, allRels
+        WITH noteNodes, COLLECT({{
+            id: entity.id,
+            label: entity.id,
+            type: labels(entity)[0],
+            properties: properties(entity)
+        }}) AS entityNodes, allRels
+
+        UNWIND allRels AS rel
+        WHERE rel IS NOT NULL
+        WITH noteNodes, entityNodes, rel
+        WITH noteNodes, entityNodes, COLLECT({{
+            from: startNode(rel).note_id,
+            to: endNode(rel).id,
+            type: type(rel),
+            label: type(rel)
+        }}) AS edges
+
+        RETURN noteNodes, entityNodes, edges
         """
 
         params = {
