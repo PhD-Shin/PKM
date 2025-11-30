@@ -7,7 +7,7 @@ python-dotenv==1.0.1
 
 # LangChain Ecosystem - 버전 고정 및 불필요한 패키지 제거
 langchain==0.3.7
-langchain-core==0.3.15
+langchain-core==0.3.17
 langchain-openai==0.2.8
 langchain-experimental==0.3.3
 
