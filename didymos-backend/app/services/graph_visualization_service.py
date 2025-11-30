@@ -294,37 +294,29 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         # Vault 조건 추가
         vault_condition = "WHERE v.id = $vault_id" if vault_id else ""
 
-        # 한 번의 쿼리로 모든 노트와 엔티티 조회
+        # 단순화된 쿼리: 먼저 노트만 가져오기
         cypher = f"""
         MATCH (u:User {{id: $user_id}})-[:OWNS]->(v:Vault)
         {vault_condition}
         MATCH (v)-[:HAS_NOTE]->(n:Note)
-        WITH n LIMIT $limit
+        OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
 
-        // 노트만 먼저 수집
-        WITH COLLECT(DISTINCT {{
-            id: n.note_id,
-            label: n.title,
-            type: 'Note',
-            properties: properties(n)
-        }}) AS noteNodes,
-        COLLECT(n) AS notes
+        WITH n, COLLECT(DISTINCT entity) AS entities, COLLECT(DISTINCT r) AS rels
+        LIMIT $limit
 
-        // 엔티티와 관계 조회
-        UNWIND notes AS note
-        OPTIONAL MATCH (note)-[r:MENTIONS]->(entity)
-        WITH noteNodes,
-             COLLECT(DISTINCT entity) AS entities,
-             COLLECT(DISTINCT r) AS rels
-
-        RETURN noteNodes,
-               [e IN entities WHERE e IS NOT NULL | {{
+        RETURN COLLECT({{
+                   id: n.note_id,
+                   label: n.title,
+                   type: 'Note',
+                   properties: properties(n)
+               }}) AS noteNodes,
+               [e IN REDUCE(acc = [], x IN COLLECT(entities) | acc + x) WHERE e IS NOT NULL | {{
                    id: e.id,
                    label: e.id,
                    type: labels(e)[0],
                    properties: properties(e)
                }}] AS entityNodes,
-               [rel IN rels WHERE rel IS NOT NULL | {{
+               [rel IN REDUCE(acc = [], x IN COLLECT(rels) | acc + x) WHERE rel IS NOT NULL | {{
                    from: startNode(rel).note_id,
                    to: endNode(rel).id,
                    type: type(rel),
