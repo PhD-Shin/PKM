@@ -169,6 +169,34 @@
   flex-wrap: wrap;
 }
 
+.didymos-graph-mode-toggle {
+  display: flex;
+  gap: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.didymos-graph-mode-toggle button {
+  padding: 4px 12px;
+  border: none;
+  background-color: var(--background-primary);
+  color: var(--text-normal);
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: background-color 0.2s;
+}
+
+.didymos-graph-mode-toggle button:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.didymos-graph-mode-toggle button.active {
+  background-color: var(--interactive-accent);
+  color: var(--text-on-accent);
+  font-weight: 600;
+}
+
 .didymos-hop-select {
   padding: 4px 8px;
   border: 1px solid var(--background-modifier-border);

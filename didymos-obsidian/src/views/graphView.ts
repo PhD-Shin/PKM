@@ -19,6 +19,7 @@ export class DidymosGraphView extends ItemView {
   themePreset: "default" | "midnight" | "contrast" = "default";
   fontPreset: "normal" | "compact" | "large" = "normal";
   layoutSpacing: "regular" | "compact" = "regular";
+  viewMode: "note" | "vault" = "note";  // 새로운 필드: 노트 모드 vs Vault 모드
 
   constructor(leaf: WorkspaceLeaf, settings: DidymosSettings) {
     super(leaf);
@@ -51,6 +52,34 @@ export class DidymosGraphView extends ItemView {
 
     // Controls
     const controls = container.createEl("div", { cls: "didymos-graph-controls" });
+
+    // 모드 전환 버튼
+    const modeToggle = controls.createEl("div", { cls: "didymos-graph-mode-toggle" });
+    const noteBtn = modeToggle.createEl("button", {
+      text: "Note",
+      cls: this.viewMode === "note" ? "active" : ""
+    });
+    const vaultBtn = modeToggle.createEl("button", {
+      text: "Vault",
+      cls: this.viewMode === "vault" ? "active" : ""
+    });
+
+    noteBtn.addEventListener("click", async () => {
+      this.viewMode = "note";
+      noteBtn.addClass("active");
+      vaultBtn.removeClass("active");
+      const active = this.app.workspace.getActiveFile();
+      if (active) {
+        await this.renderGraph(active.path);
+      }
+    });
+
+    vaultBtn.addEventListener("click", async () => {
+      this.viewMode = "vault";
+      vaultBtn.addClass("active");
+      noteBtn.removeClass("active");
+      await this.renderVaultGraph();
+    });
 
     const hopSelect = controls.createEl("select", { cls: "didymos-hop-select" });
     ["1 Hop", "2 Hops"].forEach((label, index) => {
@@ -172,6 +201,181 @@ export class DidymosGraphView extends ItemView {
         }
       })
     );
+  }
+
+  async renderVaultGraph() {
+    const graphContainer = this.containerEl.querySelector(
+      "#didymos-graph-network"
+    ) as HTMLElement;
+
+    if (!graphContainer) return;
+
+    graphContainer.empty();
+
+    try {
+      graphContainer.createEl("div", {
+        text: "Loading vault graph...",
+        cls: "didymos-graph-loading",
+      });
+
+      // 1. 모든 노트 목록 가져오기
+      const notesResponse = await fetch(
+        `${this.settings.apiEndpoint}/notes/list/${this.settings.userToken}/${this.settings.vaultId}?limit=50`
+      );
+
+      if (!notesResponse.ok) {
+        throw new Error(`Failed to fetch notes: ${notesResponse.status}`);
+      }
+
+      const notesData = await notesResponse.json();
+      const notes = notesData.notes || [];
+
+      if (notes.length === 0) {
+        graphContainer.empty();
+        graphContainer.createEl("div", {
+          text: "No notes found in vault",
+          cls: "didymos-graph-empty",
+        });
+        return;
+      }
+
+      // 2. 각 노트의 그래프 데이터 가져오기 (최대 20개)
+      const notesToFetch = notes.slice(0, 20);
+      const allNodes = new Map<string, any>();
+      const allEdges = new Map<string, any>();
+
+      for (const note of notesToFetch) {
+        try {
+          const graphData = await this.api.fetchGraph(note.note_id, 1);
+
+          // 노드 병합 (중복 제거)
+          for (const node of graphData.nodes) {
+            if (!allNodes.has(node.id)) {
+              allNodes.set(node.id, node);
+            }
+          }
+
+          // 엣지 병합 (중복 제거)
+          for (const edge of graphData.edges) {
+            const edgeKey = `${edge.from}-${edge.to}-${edge.label}`;
+            if (!allEdges.has(edgeKey)) {
+              allEdges.set(edgeKey, edge);
+            }
+          }
+        } catch (error) {
+          console.error(`Failed to fetch graph for ${note.note_id}:`, error);
+        }
+      }
+
+      const mergedGraphData: GraphData = {
+        nodes: Array.from(allNodes.values()),
+        edges: Array.from(allEdges.values()),
+      };
+
+      // 필터 적용
+      const filtered = this.applyFilters(mergedGraphData);
+
+      graphContainer.empty();
+
+      const fontSizes =
+        this.fontPreset === "compact"
+          ? { node: 12, edge: 9 }
+          : this.fontPreset === "large"
+          ? { node: 16, edge: 12 }
+          : { node: 14, edge: 10 };
+
+      const baseOptions = {
+        nodes: {
+          font: {
+            size: fontSizes.node,
+            face: "Inter, sans-serif",
+          },
+          borderWidth: 2,
+          shadow: true,
+        },
+        edges: {
+          font: {
+            size: fontSizes.edge,
+            align: "middle",
+          },
+          arrows: {
+            to: {
+              enabled: true,
+              scaleFactor: 0.5,
+            },
+          },
+          smooth: {
+            enabled: true,
+            type: "cubicBezier",
+            forceDirection: "none",
+            roundness: 0.5,
+          },
+        },
+        physics: this.layoutSpacing === "compact"
+          ? {
+              enabled: true,
+              barnesHut: {
+                gravitationalConstant: -2500,
+                springLength: 100,
+                springConstant: 0.06,
+              },
+              stabilization: { iterations: 120 },
+            }
+          : {
+              enabled: true,
+              barnesHut: {
+                gravitationalConstant: -2000,
+                springLength: 150,
+                springConstant: 0.04,
+              },
+              stabilization: { iterations: 100 },
+            },
+        interaction: {
+          hover: true,
+          tooltipDelay: 200,
+        },
+      };
+      const themedOptions = this.applyTheme(baseOptions);
+      const layoutOptions =
+        this.layoutPreset === "hierarchical"
+          ? {
+              layout: {
+                hierarchical: {
+                  direction: "LR",
+                  sortMethod: "hubsize",
+                  levelSeparation: this.layoutSpacing === "compact" ? 80 : 120,
+                  nodeSpacing: this.layoutSpacing === "compact" ? 80 : 120,
+                },
+              },
+              physics: { enabled: false },
+            }
+          : {};
+
+      this.network = new Network(graphContainer, filtered, {
+        ...themedOptions,
+        ...layoutOptions,
+      });
+
+      this.network.on("click", (params) => {
+        if (params.nodes.length > 0) {
+          const nodeId = params.nodes[0];
+          this.handleNodeClick(nodeId);
+        }
+      });
+
+      this.network.on("doubleClick", (params) => {
+        if (params.nodes.length > 0) {
+          const nodeId = params.nodes[0];
+          this.handleNodeDoubleClick(nodeId);
+        }
+      });
+    } catch (error: any) {
+      graphContainer.empty();
+      graphContainer.createEl("div", {
+        text: `❌ Failed to load vault graph: ${error.message}`,
+        cls: "didymos-graph-error",
+      });
+    }
   }
 
   async renderGraph(noteId: string) {
