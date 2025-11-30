@@ -206,10 +206,12 @@
 
 .didymos-graph-network {
   flex: 1;
+  min-height: 400px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   background-color: var(--background-secondary);
   position: relative;
+  overflow: hidden;
 }
 
 .didymos-graph-empty,

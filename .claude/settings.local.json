@@ -23,7 +23,9 @@
       "Bash(gh:*)",
       "Bash(brew install:*)",
       "Bash(git remote:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(python3:*)",
+      "Bash(zip:*)"
     ],
     "deny": [],
     "ask": []
