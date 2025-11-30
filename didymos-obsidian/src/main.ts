@@ -15,6 +15,7 @@ export default class DidymosPlugin extends Plugin {
 
   async onload() {
     await this.loadSettings();
+    await this.ensureDefaultIdentifiers();
     this.ensureUsageReset();
     this.api = new DidymosAPI(this.settings);
 
@@ -186,6 +187,22 @@ export default class DidymosPlugin extends Plugin {
 
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async ensureDefaultIdentifiers() {
+    let changed = false;
+    if (!this.settings.vaultId) {
+      this.settings.vaultId = this.app.vault.getName();
+      changed = true;
+    }
+    if (!this.settings.userToken) {
+      const slug = this.app.vault.getName().replace(/\s+/g, '-').toLowerCase();
+      this.settings.userToken = `local-${slug}`;
+      changed = true;
+    }
+    if (changed) {
+      await this.saveSettings();
+    }
   }
 
   async saveSettings() {
