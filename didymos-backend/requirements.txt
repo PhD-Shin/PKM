@@ -5,19 +5,21 @@ pydantic==2.9.0
 pydantic-settings==2.5.0
 python-dotenv==1.0.1
 
-# LangChain Ecosystem (Py3.9 호환 버전 자동 선택)
-langchain
-langchain-core
-langchain-community
-langchain-openai
-langchain-neo4j
-langchain-experimental
-langchain-text-splitters
-langgraph
+# LangChain Ecosystem - 버전 고정 및 불필요한 패키지 제거
+langchain==0.3.7
+langchain-core==0.3.15
+langchain-openai==0.2.8
+langchain-experimental==0.3.3
 
 # Database
 neo4j>=5.16.0
 
 # Utils
-httpx>=0.27.0
 tiktoken>=0.8.0
+
+# 제거된 패키지 (사용하지 않음):
+# - langchain-community: 불필요한 통합 기능
+# - langchain-neo4j: 직접 neo4j 드라이버 사용
+# - langchain-text-splitters: 사용하지 않음
+# - langgraph: 사용하지 않음
+# - httpx: 사용하지 않음

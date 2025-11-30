@@ -1,7 +1,7 @@
 """
 Notes API 라우터
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Query
 from app.schemas.note import NoteSyncRequest, NoteSyncResponse
 from app.schemas.context import NoteContextResponse
 from app.db.neo4j import get_neo4j_client
@@ -11,21 +11,14 @@ from app.services.ontology_service import process_note_to_graph
 from app.services.context_service import get_note_context
 from app.services.llm_client import summarize_content
 from app.utils.cache import TTLCache
+from app.utils.auth import get_user_id_from_token
 import logging
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/notes", tags=["notes"])
-context_cache = TTLCache(ttl_seconds=30)
-graph_cache = TTLCache(ttl_seconds=30)
-
-
-def get_user_id_from_token(token: str) -> str:
-    """
-    토큰에서 사용자 ID 추출
-    MVP: 토큰 = user_id (실제로는 JWT 검증 필요)
-    """
-    return token
+context_cache = TTLCache(ttl_seconds=300)  # 5분으로 연장
+graph_cache = TTLCache(ttl_seconds=300)  # 5분으로 연장
 
 
 @router.post("/sync", response_model=NoteSyncResponse)
@@ -122,20 +115,34 @@ async def get_note_by_id(note_id: str):
 
 
 @router.get("/list/{user_token}/{vault_id}")
-async def list_notes(user_token: str, vault_id: str):
+async def list_notes(
+    user_token: str,
+    vault_id: str,
+    limit: int = Query(50, ge=1, le=500, description="노트 수 제한"),
+    offset: int = Query(0, ge=0, description="시작 위치")
+):
     """
-    특정 Vault의 모든 노트 목록 조회
+    특정 Vault의 노트 목록 조회 (페이지네이션)
+
+    Args:
+        limit: 반환할 노트 수 (기본 50, 최대 500)
+        offset: 시작 인덱스 (페이지네이션용)
     """
     client = get_neo4j_client()
     user_id = get_user_id_from_token(user_token)
 
-    notes = get_all_notes(client, user_id, vault_id)
+    # 전체 노트 조회 후 슬라이싱 (추후 DB 레벨 페이지네이션으로 개선 가능)
+    all_notes = get_all_notes(client, user_id, vault_id)
+    paginated_notes = all_notes[offset:offset + limit]
 
     return {
         "user_id": user_id,
         "vault_id": vault_id,
-        "count": len(notes),
-        "notes": notes
+        "total": len(all_notes),
+        "count": len(paginated_notes),
+        "limit": limit,
+        "offset": offset,
+        "notes": paginated_notes
     }
 
 

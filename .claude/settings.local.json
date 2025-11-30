@@ -19,7 +19,11 @@
       "Bash(npm run build:*)",
       "Bash(git rm:*)",
       "Bash(git commit:*)",
-      "Bash(./bin/aura:*)"
+      "Bash(./bin/aura:*)",
+      "Bash(gh:*)",
+      "Bash(brew install:*)",
+      "Bash(git remote:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

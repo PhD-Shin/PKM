@@ -12,15 +12,12 @@ from app.services.review_service import (
     list_review_history,
 )
 from app.utils.cache import TTLCache
+from app.utils.auth import get_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/review", tags=["review"])
-review_cache = TTLCache(ttl_seconds=60)
-
-
-def get_user_id_from_token(token: str) -> str:
-    return token
+review_cache = TTLCache(ttl_seconds=300)  # 5분으로 연장
 
 
 @router.get("/weekly", response_model=WeeklyReviewResponse)

@@ -8,14 +8,11 @@ import logging
 from app.schemas.task import TaskUpdate, TaskOut
 from app.db.neo4j import get_neo4j_client
 from app.services.task_service import update_task, list_tasks
+from app.utils.auth import get_user_id_from_token
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
-
-
-def get_user_id_from_token(token: str) -> str:
-    return token
 
 
 @router.put("/{task_id}")
