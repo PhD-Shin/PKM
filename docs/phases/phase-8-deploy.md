@@ -299,7 +299,59 @@ docker-compose up --build
 
 ---
 
-### Step 8-7: Railway 배포
+### Step 8-7: Render 배포
+
+#### 준비 사항
+
+1. **render.yaml 파일 생성 완료** ✅
+   - 위치: `didymos-backend/render.yaml`
+   - Docker 기반 배포 설정
+   - 환경 변수 정의
+
+2. **Aura CLI 설정 완료** ✅
+   - Credential 추가: `didymos`
+   - 인스턴스 ID: `fece7c6e`
+   - 연결 URL: `neo4j+s://fece7c6e.databases.neo4j.io`
+
+#### Render 배포 단계
+
+1. **Render 계정 생성**
+   - https://render.com/ 접속
+   - GitHub 연동
+
+2. **New Web Service 생성**
+   - "New" → "Web Service" 클릭
+   - GitHub 저장소 연결 (`PKM` 저장소)
+   - Root Directory 설정: `didymos-backend`
+
+3. **Blueprint 사용 (권장)**
+   - "Apply Blueprint" 선택
+   - `render.yaml` 파일 자동 감지
+   - 설정 확인
+
+4. **환경 변수 설정**
+   ```
+   NEO4J_URI=neo4j+s://fece7c6e.databases.neo4j.io
+   NEO4J_USERNAME=neo4j
+   NEO4J_PASSWORD=v51KhaUr3L0GVAWm6yO520MdY5UCTnyumSqFltxLlZ8
+   OPENAI_API_KEY=sk-proj-...
+   ```
+
+   또는 Dashboard에서 수동 설정:
+   - Environment → Add Environment Variable
+
+5. **배포 확인**
+   - Render가 자동으로 Docker 이미지 빌드
+   - 생성된 URL 확인 (예: `https://didymos-backend.onrender.com`)
+   - Health check: `https://didymos-backend.onrender.com/`
+   - API 문서: `https://didymos-backend.onrender.com/docs`
+
+6. **Free Tier 주의사항**
+   - 15분간 요청이 없으면 자동 스핀다운
+   - 첫 요청 시 콜드 스타트 (~30초)
+   - 월 750시간 무료 사용
+
+#### Railway 배포 (대안)
 
 1. **Railway 계정 생성**
    - https://railway.app/ 접속
@@ -311,10 +363,10 @@ docker-compose up --build
 
 3. **환경 변수 설정**
    ```
-   NEO4J_URI=neo4j+s://...
-   NEO4J_USER=neo4j
-   NEO4J_PASSWORD=...
-   OPENAI_API_KEY=sk-...
+   NEO4J_URI=neo4j+s://fece7c6e.databases.neo4j.io
+   NEO4J_USERNAME=neo4j
+   NEO4J_PASSWORD=v51KhaUr3L0GVAWm6yO520MdY5UCTnyumSqFltxLlZ8
+   OPENAI_API_KEY=sk-proj-...
    ```
 
 4. **배포 확인**

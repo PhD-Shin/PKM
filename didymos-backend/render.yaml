@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: didymos-backend
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      - key: APP_NAME
+        value: Didymos API
+      - key: ENV
+        value: production
+      - key: API_PREFIX
+        value: /api/v1
+      - key: NEO4J_URI
+        sync: false
+      - key: NEO4J_USERNAME
+        sync: false
+      - key: NEO4J_PASSWORD
+        sync: false
+      - key: NEO4J_DATABASE
+        value: neo4j
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        value: '["https://didymos-backend.onrender.com", "app://obsidian.md"]'

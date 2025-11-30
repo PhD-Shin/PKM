@@ -15,9 +15,9 @@
 - ✅ Phase 5: Graph Panel (5/5)
 - ✅ Phase 6: Task 관리 (4/4)
 - ✅ Phase 7: Weekly Review (4/4)
-- ⬜ Phase 8: 배포 (7/11)
+- 🔄 Phase 8: 배포 (9/13)
 
-**전체 진행률**: 42/46 (91%)
+**전체 진행률**: 44/48 (92%)
 
 ---
 
@@ -107,7 +107,9 @@
 - [x] 사용자 문서 작성 (Backend README, 플러그인 README 패키징)
 - [x] 의사결정 지원: 온톨로지/리뷰 기반 Decision Note/Dashboard
 - [ ] 프리미엄/요금제 UX (리얼타임/쿨다운 안내, 폴더별 배치 제한)
-- [ ] Render 배포 (MVP): 컨테이너 실행, Neo4j Aura Free(TLS) 연동, US West 리전, 환경변수/헬스체크 적용
+- [x] Render 배포 설정 파일 작성 (render.yaml)
+- [x] Aura CLI 설정 완료 (credential 추가, 인스턴스 연결 확인)
+- [ ] Render 프로젝트 생성 및 배포
 - [ ] Fly.io 배포 플랜: 멀티 리전·프라이빗 네트워크 구성, 퍼시스턴트 볼륨/배포 스크립트 정리
 
 ---
