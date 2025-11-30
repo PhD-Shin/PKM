@@ -294,34 +294,39 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         # Vault 조건 추가
         vault_condition = "WHERE v.id = $vault_id" if vault_id else ""
 
-        # 단순화된 쿼리: 먼저 노트만 가져오기
+        # 완전히 다시 작성: get_note_graph 스타일로
         cypher = f"""
         MATCH (u:User {{id: $user_id}})-[:OWNS]->(v:Vault)
         {vault_condition}
         MATCH (v)-[:HAS_NOTE]->(n:Note)
-        OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
+        WITH n LIMIT $limit
 
-        WITH n, COLLECT(DISTINCT entity) AS entities, COLLECT(DISTINCT r) AS rels
-        LIMIT $limit
+        OPTIONAL MATCH (n)-[r]-(connected)
+        WHERE connected IS NOT NULL
 
-        RETURN COLLECT({{
-                   id: n.note_id,
-                   label: n.title,
-                   type: 'Note',
-                   properties: properties(n)
-               }}) AS noteNodes,
-               [e IN REDUCE(acc = [], x IN COLLECT(entities) | acc + x) WHERE e IS NOT NULL | {{
-                   id: e.id,
-                   label: e.id,
-                   type: labels(e)[0],
-                   properties: properties(e)
-               }}] AS entityNodes,
-               [rel IN REDUCE(acc = [], x IN COLLECT(rels) | acc + x) WHERE rel IS NOT NULL | {{
-                   from: startNode(rel).note_id,
-                   to: endNode(rel).id,
-                   type: type(rel),
-                   label: type(rel)
-               }}] AS edges
+        WITH COLLECT(DISTINCT n) AS notes,
+             COLLECT(DISTINCT connected) AS connectedNodes,
+             COLLECT(DISTINCT r) AS allRels
+
+        RETURN
+            [note IN notes | {{
+                id: note.note_id,
+                label: note.title,
+                type: 'Note',
+                properties: properties(note)
+            }}] +
+            [node IN connectedNodes WHERE node IS NOT NULL | {{
+                id: COALESCE(node.id, node.note_id, 'unknown'),
+                label: COALESCE(node.id, node.title, labels(node)[0]),
+                type: labels(node)[0],
+                properties: properties(node)
+            }}] AS nodes,
+            [rel IN allRels WHERE rel IS NOT NULL | {{
+                from: COALESCE(startNode(rel).note_id, startNode(rel).id),
+                to: COALESCE(endNode(rel).note_id, endNode(rel).id),
+                type: type(rel),
+                label: type(rel)
+            }}] AS edges
         """
 
         params = {
@@ -340,16 +345,13 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
             return {"nodes": [], "edges": []}
 
         result = results[0]
-        note_nodes = result.get("noteNodes", [])
-        entity_nodes = result.get("entityNodes", [])
-        edges = result.get("allEdges", [])
+        nodes = result.get("nodes", [])
+        edges = result.get("edges", [])
 
-        all_nodes = note_nodes + entity_nodes
-
-        logger.info(f"Found {len(all_nodes)} nodes ({len(note_nodes)} notes, {len(entity_nodes)} entities) and {len(edges)} edges")
+        logger.info(f"Found {len(nodes)} nodes and {len(edges)} edges")
 
         return {
-            "nodes": all_nodes,
+            "nodes": nodes,
             "edges": edges
         }
 
