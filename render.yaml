@@ -4,8 +4,8 @@ services:
     runtime: docker
     plan: free
     region: singapore
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
+    dockerfilePath: ./didymos-backend/Dockerfile
+    dockerContext: ./didymos-backend
     envVars:
       - key: APP_NAME
         value: Didymos API
