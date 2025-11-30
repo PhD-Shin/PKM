@@ -291,14 +291,21 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
     try:
         client = get_neo4j_client()
 
-        # Use the same pattern as get_all_notes which works
+        # Use EXACT same query as get_all_notes which works
         cypher_notes = """
-        MATCH (n:Note)
+        MATCH (u:User {id: $user_id})-[:OWNS]->(v:Vault {id: $vault_id})-[:HAS_NOTE]->(n:Note)
         RETURN n.note_id AS note_id, n.title AS title
+        ORDER BY n.updated_at DESC
         LIMIT $limit
         """
 
-        note_results = client.query(cypher_notes, {"limit": limit})
+        params = {
+            "user_id": user_id,
+            "vault_id": vault_id if vault_id else "obsidian",
+            "limit": limit
+        }
+
+        note_results = client.query(cypher_notes, params)
 
         if not note_results:
             logger.warning(f"No notes found")
