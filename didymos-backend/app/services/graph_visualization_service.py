@@ -357,21 +357,20 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         note_ids = [r["note_id"] for r in note_results]
         logger.info(f"Found {len(note_ids)} notes, first 5: {note_ids[:5]}")
 
-        # Get notes, entities, and edges - split into separate collections
+        # Get notes, entities, and edges - use UNWIND for proper matching
         cypher_graph = """
-        MATCH (n:Note)
-        WHERE n.note_id IN $note_ids
-
+        // Collect all notes
+        UNWIND $note_ids AS note_id
+        MATCH (n:Note {note_id: note_id})
         WITH COLLECT(DISTINCT {
             id: n.note_id,
             label: COALESCE(n.title, n.note_id),
             type: 'Note'
-        }) AS noteNodes, $note_ids AS note_ids
+        }) AS noteNodes, COLLECT(n) AS allNotes
 
-        // Get entities
-        OPTIONAL MATCH (n2:Note)-[r:MENTIONS]->(entity)
-        WHERE n2.note_id IN note_ids
-
+        // Get entities and relationships
+        UNWIND allNotes AS note
+        OPTIONAL MATCH (note)-[r:MENTIONS]->(entity)
         WITH
             noteNodes,
             COLLECT(DISTINCT entity) AS entities,
@@ -406,9 +405,8 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
 
         # Get entity-to-entity relationships
         cypher_entity_rels = """
-        MATCH (n:Note)
-        WHERE n.note_id IN $note_ids
-        MATCH (n)-[:MENTIONS]->(e1)
+        UNWIND $note_ids AS note_id
+        MATCH (n:Note {note_id: note_id})-[:MENTIONS]->(e1)
         MATCH (e1)-[r]->(e2)
         WHERE type(r) IN ['RELATED_TO', 'PART_OF', 'HAS_TASK', 'ASSIGNED_TO', 'BROADER', 'NARROWER']
         RETURN DISTINCT
@@ -429,9 +427,13 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
             rel_type = record.get("rel_type")
 
             if from_id and to_id and rel_type:
+                # Add type prefix to match entity node IDs
+                from_prefixed = f"{from_type}_{from_id}" if from_type else from_id
+                to_prefixed = f"{to_type}_{to_id}" if to_type else to_id
+
                 edges.append({
-                    "from": from_id,
-                    "to": to_id,
+                    "from": from_prefixed,
+                    "to": to_prefixed,
                     "type": rel_type,
                     "label": rel_type.lower().replace("_", " ")
                 })
