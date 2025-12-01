@@ -309,9 +309,12 @@ def compute_clusters_semantic(
             if not entities_result or len(entities_result) == 0:
                 continue  # 엔티티가 없는 클러스터는 스킵
 
-            # 엔티티 데이터 추출
+            # 엔티티 데이터 추출 (None인 경우 entity_id로 대체)
             cluster_entity_ids = [e["entity_id"] for e in entities_result]
-            cluster_entity_names = [e["entity_name"] for e in entities_result]
+            cluster_entity_names = [
+                e["entity_name"] if e["entity_name"] else e["entity_id"]
+                for e in entities_result
+            ]
             cluster_types = [e["entity_type"] for e in entities_result]
             cluster_mentions = [e["mention_count"] for e in entities_result]
 
@@ -321,8 +324,9 @@ def compute_clusters_semantic(
                 type_counts[t.lower()] = type_counts.get(t.lower(), 0) + 1
 
             # 클러스터 이름 추론 (가장 많이 언급된 엔티티 이름 사용)
-            if len(cluster_entity_names) > 0:
-                cluster_name = f"{cluster_entity_names[0]} 관련"  # 첫 번째가 mention_count 내림차순
+            first_entity_name = cluster_entity_names[0] if cluster_entity_names else None
+            if first_entity_name:
+                cluster_name = f"{first_entity_name} 관련"  # 첫 번째가 mention_count 내림차순
             else:
                 cluster_name = f"Cluster {cluster_id + 1}"
 
@@ -426,11 +430,21 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
 
 def _compute_recency_bonus(updated_at_list: List[Optional[datetime]]) -> Tuple[float, int]:
     """최근 7일 업데이트 수와 보너스 점수 계산"""
-    now = datetime.utcnow()
+    from datetime import timezone
+    now = datetime.now(timezone.utc)
     recent_threshold = now - timedelta(days=7)
     recent_updates = 0
 
-    valid_dates = [dt for dt in updated_at_list if dt is not None]
+    # timezone-aware로 변환하여 비교
+    valid_dates = []
+    for dt in updated_at_list:
+        if dt is None:
+            continue
+        # timezone-naive인 경우 UTC로 가정
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        valid_dates.append(dt)
+
     for dt in valid_dates:
         if dt >= recent_threshold:
             recent_updates += 1
