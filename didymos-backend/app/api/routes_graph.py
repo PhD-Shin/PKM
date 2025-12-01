@@ -79,14 +79,14 @@ async def get_note_graph_view(
 async def get_user_graph_view(
     user_id: str,
     vault_id: Optional[str] = Query(None, description="Vault ID (optional)"),
-    limit: int = Query(30, description="최대 노드 개수", ge=10, le=200)
+    limit: int = Query(100, description="최대 노드 개수", ge=10, le=500)
 ):
     """
     사용자의 전체 지식 그래프
 
     - user_id: 사용자 ID
     - vault_id: Vault ID (optional)
-    - limit: 최대 노드 개수
+    - limit: 최대 노드 개수 (기본 100, 최대 5000)
     """
     try:
         graph_data = get_user_graph(
