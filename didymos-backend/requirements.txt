@@ -17,6 +17,12 @@ neo4j>=5.16.0
 # Utils
 tiktoken>=0.8.0
 
+# Semantic Clustering (Phase 11)
+umap-learn>=0.5.5
+hdbscan>=0.8.33
+scikit-learn>=1.3.0
+numpy>=1.24.0
+
 # 제거된 패키지 (사용하지 않음):
 # - langchain-community: 불필요한 통합 기능
 # - langchain-neo4j: 직접 neo4j 드라이버 사용
