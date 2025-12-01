@@ -1,26 +1,117 @@
 # 🚀 Didymos - 개발 프로세스 및 진행 상황
 
-> LangChain + LangGraph 기반 모던 아키텍처
+> "Smart Connections를 넘어선 구조화된 2nd Brain"
+> Obsidian 플러그인 구독 모델 - MVP 2주 스프린트
+
+**Last Updated**: 2025-12-02
+**Status**: MVP Phase 11 - Day 11 완료 (의사결정 인사이트 강화), Day 12-13 테스트 진행 중
+
+---
+
+## 🎯 프로젝트 개요
+
+### 제품 포지셔닝
+
+| 기능 | Smart Connections | Didymos |
+|------|-------------------|---------|
+| **검색** | 유사 노트 찾기 | ✅ + 구조화된 맥락 |
+| **구조** | 평면적 | ✅ 계층적 지식 그래프 |
+| **분석** | 없음 | ✅ 의사결정 인사이트 |
+| **LLM** | 임베딩만 | ✅ 클러스터 요약 |
+
+### 타겟 사용자
+1. **PhD/연구자**: 논문 리뷰, 문헌 정리
+2. **PKM 파워유저**: 1000+ 노트, Zettelkasten 실천
+3. **의사결정자**: 프로젝트 관리, 전략적 사고
+
+### 시장 분석
+- **PKM 시장**: $500M (2020) → $3B (2025)
+- **Obsidian 사용자**: 1M+ (2024)
+- **Smart Connections 구독자**: ~10K 추정
+- **타겟 전환율**: 0.5-3% (연구자/파워유저)
+
+---
+
+## 💰 비즈니스 모델
+
+### 요금제
+
+| 티어 | 가격 | 기능 | 타겟 |
+|------|------|------|------|
+| **Free** | $0 | 100 노트, 주 1회 sync | 일반 사용자 |
+| **Pro** | $7/월 | 무제한 노트, 실시간 sync | 파워유저 |
+| **Research** | $15/월 | + 고급 분석, API | 연구자 |
+
+### 수익 예측
+
+**Year 1**: $10.2K/년 (100 Pro + 10 Research)
+**Year 2**: $68K/년 (600 Pro + 100 Research)
+**Year 3**: $300K/년 (2,500 Pro + 500 Research)
+
+### 비용 구조 (사용자당/월)
+- Neo4j Aura: ~$0.50
+- Claude API: ~$1.50
+- 인프라: ~$0.30
+- **총**: ~$2.30/user/month
+- **마진**: $4.70 (Pro), $12.70 (Research)
+
+---
+
+## 🏗️ 기술 아키텍처
+
+### 스택
+- **Backend**: FastAPI, LangChain, LangGraph
+- **Database**: Neo4j AuraDB
+- **AI**: Claude 3.5 Sonnet (클러스터 요약), OpenAI Embeddings (클러스터링)
+- **Frontend**: Obsidian Plugin (TypeScript), vis-network
+- **Clustering**: UMAP + HDBSCAN
+
+### 데이터 흐름
+```
+Obsidian 노트 수정
+  ↓
+플러그인 자동 감지
+  ↓
+FastAPI /notes/sync
+  ↓
+LangChain LLMGraphTransformer
+  ↓
+Neo4j 저장 (Note, Topic, Project, Task)
+  ↓
+클러스터 캐시 무효화
+  ↓
+/graph/vault/clustered 호출
+  ↓
+UMAP + HDBSCAN 클러스터링
+  ↓
+Claude 클러스터 요약 생성
+  ↓
+vis-network 시각화
+```
+
+### Neo4j 독립성 전략
+
+**Phase 1 (MVP)**: Neo4j Aura 무료 티어
+**Phase 2 (1000명)**: 추상화 레이어 + NetworkX 옵션
+**Phase 3 (5000명)**: 마이그레이션 또는 계속 사용 (비용 감당 가능)
 
 ---
 
 ## 📊 전체 진행 상황
 
-### 현재 상태
-- ✅ Phase 0: 환경 설정 (6/6)
-- ✅ Phase 1: 백엔드 인프라 (LangChain) (3/3)
-- ✅ Phase 2: 노트 동기화 (6/6)
-- ✅ Phase 3: AI 온톨로지 (Text2Graph) (4/4)
-- ✅ Phase 4: Context Panel (3/3) - Bolt 전환 완료, Obsidian Context UI 구현
-- ✅ Phase 5: Graph Panel (5/5) - Vault 모드 + Sync All Notes 추가
-- ✅ Phase 6: Task 관리 (4/4)
-- ✅ Phase 7: Weekly Review (4/4)
-- 🔄 Phase 8: 배포 (10/14) - Railway 프로덕션 배포 완료
-- ✅ Phase 9: 패턴 분석 & 추천 (6/6) - PageRank, Community Detection, 의사결정 추천
-- 🔄 **Phase 10: 제품 개선 & UX 강화 (2/13)** - PRD/UseCase 문서화 완료
+### 현재 상태 (2025-12-02)
+- ✅ Phase 0-9: 기본 MVP 완료 (93%)
+- 🔄 **Phase 10: 비즈니스 모델 정립 & 재기획** (진행 중)
+  - ✅ PRD v2.0 작성 (비즈니스 모델, MVP 범위)
+  - ✅ 전략적 방향 확정 (Obsidian 플러그인 구독)
+  - 🔄 문서 업데이트 중
+- 🎯 **Phase 11: 의미론적 클러스터링 MVP** (2주 스프린트 진행 중)
+  - 목표: 계층적 지식 그래프 시각화
+  - 핵심: LLM 기반 클러스터 요약 + 의사결정 인사이트
+  - 진행: Day 1-11 완료 (LLM 통합, 클러스터링, 메타데이터, UI 애니메이션, 인사이트), Day 12-13 테스트 진행 중
 
-**MVP 완성도**: 51/55 (93%)
-**제품 완성도**: 53/68 (78%)
+**기술 MVP 완성도**: 51/55 (93%)
+**제품 시장 적합성**: 재정의 완료, 구현 시작 단계
 
 ---
 
@@ -243,52 +334,104 @@
 
 ---
 
-### Phase 11: 계층적 지식 그래프 (향후 계획)
-**예상 시간**: 6~8시간 | **목표**: Palantir Foundry 스타일 계층적 온톨로지
+### Phase 11: 의미론적 계층 클러스터링 MVP (2주 스프린트)
+**예상 시간**: 2주 (Day 1-14) | **목표**: 구독 가치 입증
 
-#### 현재 상태 (2025-12-01)
-- ✅ **1단계 클러스터링**: Topic별로 연결된 노트들을 클러스터로 묶기
-  - 500개 노트 → ~10-20개 Topic 클러스터로 축소
-  - 25-50배 시각적 복잡도 감소
-  - 더블클릭으로 클러스터 펼치기/접기
+#### 핵심 차별점 (Smart Connections vs Didymos)
+```
+Smart Connections:
+- 유사 노트 검색 (평면적)
+- 단순 임베딩 매칭
 
-#### 향후 개선 방향 (사용자 피드백 후 결정)
-- [ ] **2-3단계 계층 구조** (Palantir 방식)
-  ```
-  Level 1: Knowledge Domain (5-10개 큰 덩어리)
-    └─ Level 2: Topic Cluster (주제별 묶음)
-        └─ Level 3: Individual Notes (세부 노트들)
-  ```
+Didymos:
+- ✅ 의미론적 계층 그래프
+- ✅ LLM 기반 클러스터 요약
+- ✅ 의사결정 인사이트
+- ✅ 구조화된 2nd Brain
+```
 
-- [ ] **백엔드 계층 정보 제공**
-  - Domain/Topic/Note 명시적 구분
-  - API에서 hierarchy level 메타데이터 추가
+#### Week 1: LLM 통합 & 의미론적 클러스터링 (Day 1-7)
+- [x] **Day 1-2: GPT-5 Mini API 통합** ✅ 2025-12-02 완료
+  - LLM 클라이언트 설정 (`app/services/llm_client.py`)
+  - 클러스터 요약 프롬프트 작성
+  - `generate_llm_summaries()` 실제 구현
+  - 모든 gpt-4o-mini → gpt-5-mini 마이그레이션
+  - API 버그 수정 및 백엔드 테스트 완료
 
-- [ ] **프론트엔드 다단계 클러스터링**
-  - Project → Topic → Note 자동 그룹화
-  - 1번 클릭: Domain 펼치기 → Topics 표시
-  - 2번 클릭: Topic 펼치기 → Notes 표시
-  - Zoom/Pan 네비게이션
+- [x] **Day 3-4: 의미론적 클러스터링 알고리즘** (2025-12-02 코드 반영)
+  - 임베딩 기반 클러스터링 (UMAP + HDBSCAN) + 노이즈/샘플 부족 시 자동 폴백 (`umap_hdbscan_fallback:*`)
+  - `compute_clusters_semantic()` 개선: 최소 샘플 가드, 클러스터 미생성 시 타입 기반 폴백
+  - API `method` 파라미터 (`semantic`, `type_based`, `auto`) + 캐시 무시 옵션 반영
+  - Obsidian Graph View: 클러스터링 방식/LLM 요약 토글 + Recompute 버튼 추가, 상태 표시바로 피드백 제공
 
-#### 결정 기준
-**1주일 실사용 후 평가 항목**:
-1. 현재 1단계 클러스터링으로 충분한가?
-2. 500개 노트 환경에서 탐색이 불편한가?
-3. 추가 계층이 실제로 도움이 되는가?
+- [x] **Day 5: 클러스터 메타데이터 & 관계 강화** ✅ 2025-12-02 완료
+  - 클러스터 중요도 = mention 기반 + RECENCY 보너스 (최근 7일 업데이트 수)
+  - 샘플 엔티티/노트, 자동 인사이트/Next Action 추가
+  - 클러스터 간 공유 엔티티 기반 엣지 생성 (RELATED_TO, weight=공유 개수)
+  - 캐시 TTL 12h, 최신 노트 업데이트보다 오래된 캐시는 자동 무효화
+  - Obsidian Graph View: 클러스터 상세 패널(요약/인사이트/샘플/최근 업데이트/액션) + 샘플 노트 바로 열기 버튼 제공
 
-**판단 기준**:
-- 불편함 없음 → 현재 유지
-- 탐색 어려움 → 2-3단계 계층 구현
-- Premature optimization 회피 원칙
+- [x] **Day 5-6: 클러스터 메타데이터 강화** ✅ 2025-12-02 완료
+  - 클러스터별 키 인사이트 추출 구현
+  - 중요도 점수 계산 (mention_count + recency bonus)
+  - 클러스터 간 관계 분석 (공유 노트 수 기반 엣지 생성)
+
+- [x] **Day 7: 캐싱 & 성능 최적화** ✅ 2025-12-02 완료
+  - 클러스터 캐시 TTL 12시간으로 최적화
+  - 증분 업데이트 로직 (노트 변경 시 캐시 무효화)
+  - LLM 병렬 처리 (ThreadPoolExecutor, 최대 3개 동시)
+  - 백그라운드 캐시 워밍업 기능 추가 (warmup 파라미터)
+
+#### Week 2: UI 개선 & 사용자 테스트 (Day 8-14)
+- [x] **Day 8-9: 계층적 탐색 UI** ✅ 2025-12-02 완료
+  - 클러스터 상세 패널 슬라이드 애니메이션 (slideInRight)
+  - 인사이트/액션 hover 애니메이션 (translateX)
+  - 샘플 노트 버튼 hover 효과 추가
+  - 상태 바 hover 효과로 사용자 피드백 개선
+
+- [x] **Day 10-11: 의사결정 인사이트 강화** ✅ 2025-12-02 완료
+  - LLM 기반 "다음 행동 제안" (next_actions) 생성
+  - 최근 7일간 업데이트 수 통계 표시
+  - 클러스터별 샘플 노트 제공 (최대 5개)
+  - 실행 가능한 인사이트 생성 프롬프트 개선
+
+- [ ] **Day 12-13: 내부 테스트**
+  - 본인 Vault (471개 노트)로 실전 테스트
+  - 클러스터 품질 평가 (의미 있는 그룹화?)
+  - UX 버그 수정
+  - API 응답 시간 측정
+
+- [ ] **Day 14: 베타 준비**
+  - 데모 비디오 녹화 (1분)
+  - README 업데이트 (스크린샷 포함)
+  - Beta 키 시스템 설정
+
+#### 성공 지표 (2주 후 평가)
+1. **기술적 성공**
+   - 471개 노트 → 8-12개 의미 클러스터로 축소
+   - 클러스터 요약 생성 성공률 > 95%
+   - API 응답 시간 < 2초
+
+2. **사용자 가치**
+   - "의미 있는 그룹화" 자가 평가 ≥ 8/10
+   - LLM 인사이트가 실제로 유용함
+   - Smart Connections 대비 우월성 체감
+
+3. **비즈니스 준비**
+   - 데모 가능한 상태
+   - 구독 가치 명확히 설명 가능
+   - 베타 런칭 준비 완료
 
 ---
 
-## 🛠️ 기술 스택 (Updated)
+## 🛠️ 기술 스택 (MVP Phase 11)
 
 - **Backend**: FastAPI, **LangChain**, **LangGraph**
-- **Database**: Neo4j AuraDB
-- **AI**: GPT-5 mini / GPT-4o-mini
+- **Database**: Neo4j AuraDB (무료 → Aura Professional 전환 예정)
+- **AI**: **Claude 3.5 Sonnet** (클러스터 요약), OpenAI Embeddings (의미론적 클러스터링)
 - **Frontend**: Obsidian API, TypeScript, **vis-network**
+- **Clustering**: UMAP + HDBSCAN (의미론적 그룹화)
+- **Business**: Freemium 구독 ($7 Pro, $15 Research/월)
 
 ---
 

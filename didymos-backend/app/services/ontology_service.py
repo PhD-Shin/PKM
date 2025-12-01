@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # LLM 초기화
 llm = ChatOpenAI(
-    model="gpt-4o-mini",  # 비용 효율적
+    model="gpt-5-mini",  # GPT-5 Mini
     temperature=0,        # 추출은 결정적이어야 함
     api_key=settings.openai_api_key
 )
