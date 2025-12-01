@@ -31,23 +31,9 @@ class Settings(BaseSettings):
     @property
     def cors_origins_list(self) -> List[str]:
         """CORS origins를 리스트로 반환"""
-        # Obsidian Desktop은 app://obsidian.md origin 사용
-        # 개발/프로덕션 모두 호환하도록 "*" 허용
-        default_origins = [
-            "*",  # 모든 origin 허용 (Obsidian Desktop 호환)
-            "http://localhost:8000",
-            "http://localhost:3000",
-            "app://obsidian.md",
-            "capacitor://localhost",  # Obsidian Mobile
-        ]
-        try:
-            custom_origins = json.loads(self.cors_origins)
-            # "*"가 포함되어 있으면 모든 origin 허용
-            if "*" in custom_origins:
-                return ["*"]
-            return list(set(default_origins + custom_origins))
-        except:
-            return default_origins
+        # Obsidian Desktop (app://obsidian.md) 및 Mobile 지원을 위해
+        # 기본적으로 모든 origin 허용
+        return ["*"]
 
     class Config:
         env_file = ".env"
