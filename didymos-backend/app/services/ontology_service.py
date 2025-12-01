@@ -52,40 +52,51 @@ llm = ChatOpenAI(
     api_key=settings.openai_api_key
 )
 
-# 커스텀 프롬프트 템플릿 (additional_instructions 대신 prompt 파라미터 사용)
+# 커스텀 프롬프트 템플릿 - 맥락 중심 엔티티 추출
 from langchain_core.prompts import ChatPromptTemplate
 
 CUSTOM_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """You are extracting CORE CONCEPTS from personal knowledge management notes into a knowledge graph.
+    ("system", """You are a semantic analyst for a personal knowledge management system. Your task is to deeply understand the CONTEXT and PURPOSE of each note, then extract only the concepts that represent what this note is truly about.
 
-**CRITICAL: Focus on what the note is ABOUT, not what it merely MENTIONS.**
+## Your Analysis Process:
+1. **Read the entire note carefully** - understand the author's intent
+2. **Identify the central theme** - what question is being answered? what problem is being solved?
+3. **Find conceptual anchors** - ideas that would connect this note to other related notes
+4. **Ignore surface-level keywords** - names, places, dates that appear but aren't central
 
-## Entity Types to Extract:
-- **Topic**: The MAIN SUBJECT of this note (the primary theme being explored)
-- **Project**: Only if the note is ABOUT a specific project
-- **Task**: Explicit action items with clear deliverables
-- **Person**: Only if this person is CENTRAL to the note's content
+## Entity Types (Extract ONLY if central to the note's purpose):
 
-## What NOT to Extract:
-- Institutional affiliations (서울대학교, MIT, Google) unless the note is ABOUT that institution
-- Author's credentials or background info
-- Generic terms: 연구, 논문, 프로젝트, 회의, 미팅
-- Locations, dates, or tools mentioned in passing
+**Topic** - The intellectual concept or domain this note explores
+- Good: "Attention Mechanism", "Knowledge Graph Design", "Spaced Repetition Learning"
+- Bad: "Python" (just a tool), "2024" (just a date), "서울대학교" (just a location)
+- Ask: "Is this note TEACHING or EXPLORING this concept?"
 
-## Key Question: "If someone searches for this entity, would THIS note be relevant?"
-- If YES → Extract it
-- If NO → Do NOT extract it
+**Project** - A defined initiative with goals that this note documents
+- Good: "Didymos PKM System", "Thesis Chapter 3"
+- Bad: "research" (too vague), "meeting" (just an event)
+- Ask: "Does this note advance or plan this specific project?"
 
-**Quality over Quantity**: Extract 1-3 truly relevant entities rather than 10 loosely connected ones.
+**Person** - Someone whose ideas, work, or collaboration is discussed in depth
+- Good: "Vaswani" (if discussing their transformer paper in depth)
+- Bad: "Professor Kim" (if just mentioned in passing or as affiliation)
+- Ask: "Are this person's contributions central to understanding this note?"
 
-## Allowed Relationships:
-- MENTIONS: Note mentions an entity
-- RELATED_TO: Entity is related to another entity
-- PART_OF: Entity is part of another entity
-- ASSIGNED_TO: Task is assigned to a person
-- HAS_TASK: Project has a task
+**Task** - A concrete action item with clear deliverable
+- Good: "Implement embedding pipeline", "Review literature on RAG"
+- Bad: "think about it", "follow up" (too vague)
+- Ask: "Is this a specific, actionable commitment?"
 
-Extract entities and relationships from the following text. Return them in JSON format."""),
+## Critical Rules:
+1. **Context over Keywords**: "서울대학교에서 Transformer 연구" → Extract "Transformer" (the topic), NOT "서울대학교" (just context)
+2. **Depth over Breadth**: Extract 1-3 truly central concepts, not 10 loosely related terms
+3. **Searchability Test**: "If I search for this entity, would I want to find THIS note?" If no, don't extract.
+4. **No Generic Terms**: Never extract: 연구, 논문, 프로젝트, 회의, 미팅, 정리, 메모, 노트
+
+## Relationships:
+- RELATED_TO: Conceptual connection between extracted entities
+- PART_OF: Hierarchical relationship (subtopic of larger topic)
+
+Think step by step about what this note is REALLY about before extracting."""),
     ("human", "{input}")
 ])
 
