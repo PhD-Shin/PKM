@@ -25,8 +25,7 @@ def get_note_graph(note_id: str, depth: int = 1):
             COLLECT(DISTINCT {
                 id: COALESCE(node.note_id, node.id),
                 label: COALESCE(node.title, node.id, labels(node)[0]),
-                type: labels(node)[0],
-                properties: properties(node)
+                type: labels(node)[0]
             }) AS nodes,
             COLLECT(DISTINCT {
                 from: COALESCE(startNode(rel).note_id, startNode(rel).id),
@@ -328,8 +327,7 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
             COLLECT(DISTINCT {
                 id: n.note_id,
                 label: COALESCE(n.title, n.note_id),
-                type: 'Note',
-                properties: properties(n)
+                type: 'Note'
             }) AS noteNodes,
 
             REDUCE(s = [], entity IN entities |
@@ -337,8 +335,7 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
                 THEN s + [{
                     id: entity.id,
                     label: COALESCE(entity.name, entity.title, entity.id),
-                    type: labels(entity)[0],
-                    properties: properties(entity)
+                    type: labels(entity)[0]
                 }]
                 ELSE s END
             ) AS entityNodes,
@@ -414,14 +411,12 @@ def get_entity_graph(entity_type: str = None, limit: int = 50):
             [entity IN entities | {{
                 id: entity.id,
                 label: entity.id,
-                type: labels(entity)[0],
-                properties: properties(entity)
+                type: labels(entity)[0]
             }}] +
             [note IN notes WHERE note IS NOT NULL | {{
                 id: note.note_id,
                 label: note.title,
-                type: 'Note',
-                properties: properties(note)
+                type: 'Note'
             }}] AS allNodes,
             rels
 
