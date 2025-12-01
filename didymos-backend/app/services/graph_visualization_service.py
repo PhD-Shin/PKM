@@ -357,42 +357,34 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         note_ids = [r["note_id"] for r in note_results]
         logger.info(f"Found {len(note_ids)} notes, first 5: {note_ids[:5]}")
 
-        # Simpler query: get notes and their direct entities
+        # Get notes, entities, and edges
         cypher_graph = """
         MATCH (n:Note)
         WHERE n.note_id IN $note_ids
-        WITH n
         OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
 
-        WITH n, COLLECT(DISTINCT entity) AS entities, COLLECT(DISTINCT r) AS relationships
-
-        RETURN
+        WITH
             COLLECT(DISTINCT {
                 id: n.note_id,
                 label: COALESCE(n.title, n.note_id),
                 type: 'Note'
             }) AS noteNodes,
+            COLLECT(DISTINCT CASE WHEN entity IS NOT NULL THEN {
+                id: entity.id,
+                label: COALESCE(entity.name, entity.title, entity.id),
+                type: labels(entity)[0]
+            } ELSE null END) AS entityNodes,
+            COLLECT(DISTINCT CASE WHEN r IS NOT NULL THEN {
+                from: n.note_id,
+                to: entity.id,
+                type: type(r),
+                label: type(r)
+            } ELSE null END) AS edges
 
-            REDUCE(s = [], entity IN entities |
-                CASE WHEN entity IS NOT NULL
-                THEN s + [{
-                    id: entity.id,
-                    label: COALESCE(entity.name, entity.title, entity.id),
-                    type: labels(entity)[0]
-                }]
-                ELSE s END
-            ) AS entityNodes,
-
-            REDUCE(s = [], rel IN relationships |
-                CASE WHEN rel IS NOT NULL
-                THEN s + [{
-                    from: startNode(rel).note_id,
-                    to: endNode(rel).id,
-                    type: type(rel),
-                    label: type(rel)
-                }]
-                ELSE s END
-            ) AS edges
+        RETURN
+            noteNodes,
+            [node IN entityNodes WHERE node IS NOT NULL] AS entityNodes,
+            [edge IN edges WHERE edge IS NOT NULL] AS edges
         """
 
         graph_results = client.query(cypher_graph, {"note_ids": note_ids})
