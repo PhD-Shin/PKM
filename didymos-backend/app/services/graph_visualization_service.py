@@ -380,13 +380,13 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         RETURN
             noteNodes,
             [e IN entities WHERE e IS NOT NULL | {
-                id: e.id,
+                id: toLower(labels(e)[0]) + '_' + e.id,
                 label: COALESCE(e.name, e.title, e.id),
                 type: labels(e)[0]
             }] AS entityNodes,
             [r IN rels WHERE r IS NOT NULL | {
                 from: startNode(r).note_id,
-                to: endNode(r).id,
+                to: toLower(labels(endNode(r))[0]) + '_' + endNode(r).id,
                 type: type(r),
                 label: type(r)
             }] AS edges
