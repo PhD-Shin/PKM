@@ -20,6 +20,8 @@ export interface DidymosSettings {
   appendOntologyToNote: boolean;
   ontologyFormat: "json";
   decisionFolder: string;
+  onboardingCompleted: boolean;
+  lastBulkSyncTime: number; // Timestamp of last bulk sync
 }
 
 export const DEFAULT_SETTINGS: DidymosSettings = {
@@ -44,4 +46,6 @@ export const DEFAULT_SETTINGS: DidymosSettings = {
   appendOntologyToNote: false,
   ontologyFormat: "json",
   decisionFolder: "Didymos/Decisions",
+  onboardingCompleted: false,
+  lastBulkSyncTime: 0,
 };

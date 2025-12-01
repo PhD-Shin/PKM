@@ -5,11 +5,18 @@ import { DidymosGraphView, DIDYMOS_GRAPH_VIEW_TYPE } from './views/graphView';
 import { DidymosTaskView, DIDYMOS_TASK_VIEW_TYPE } from './views/taskView';
 import { DidymosReviewView, DIDYMOS_REVIEW_VIEW_TYPE } from './views/reviewView';
 import { DidymosDecisionView, DIDYMOS_DECISION_VIEW_TYPE } from './views/decisionView';
+import { DidymosInsightsView, INSIGHTS_VIEW_TYPE } from './views/insightsView';
+import { DidymosUnifiedView, UNIFIED_VIEW_TYPE } from './views/unifiedView';
 import { DidymosSettings, DEFAULT_SETTINGS } from './settings';
+import { TemplateService } from './services/templateService';
+import { OnboardingModal } from './modals/onboardingModal';
+import { TemplateGalleryModal } from './modals/templateGalleryModal';
+import { DidymosControlPanelView, CONTROL_PANEL_VIEW_TYPE, ControlPanelAction } from './views/controlPanelView';
 
 export default class DidymosPlugin extends Plugin {
   settings: DidymosSettings;
   api: DidymosAPI;
+  templateService: TemplateService;
   hourlyInterval: number | null = null;
   lastRealtimeSync: number = 0;
 
@@ -18,6 +25,9 @@ export default class DidymosPlugin extends Plugin {
     await this.ensureDefaultIdentifiers();
     this.ensureUsageReset();
     this.api = new DidymosAPI(this.settings);
+    this.templateService = new TemplateService(this.app);
+
+    // 온보딩 제거 - Control Panel에서 수동으로 접근 가능
 
     // Settings tab
     this.addSettingTab(new DidymosSettingTab(this.app, this));
@@ -31,7 +41,7 @@ export default class DidymosPlugin extends Plugin {
     // Graph View 등록
     this.registerView(
       DIDYMOS_GRAPH_VIEW_TYPE,
-      (leaf) => new DidymosGraphView(leaf, this.settings)
+      (leaf) => new DidymosGraphView(leaf, this.settings, this)
     );
 
     // Task View 등록
@@ -52,101 +62,44 @@ export default class DidymosPlugin extends Plugin {
       (leaf) => new DidymosDecisionView(leaf, this.settings)
     );
 
-    // 리본 아이콘
-    this.addRibbonIcon('mountain', 'Open Didymos Context', () => {
-      this.activateContextView();
-    });
+    // Insights View 등록
+    this.registerView(
+      INSIGHTS_VIEW_TYPE,
+      (leaf) => new DidymosInsightsView(leaf, this.settings)
+    );
 
-    // 명령: Context 패널 열기
-    this.addCommand({
-      id: 'open-context-panel',
-      name: 'Open Context Panel',
-      callback: async () => {
-        await this.activateContextView();
+    // Unified View 등록
+    this.registerView(
+      UNIFIED_VIEW_TYPE,
+      (leaf) => new DidymosUnifiedView(leaf, this.settings)
+    );
+
+    // Control Panel View 등록
+    this.registerView(
+      CONTROL_PANEL_VIEW_TYPE,
+      (leaf) => {
+        const actions = this.getControlPanelActions();
+        return new DidymosControlPanelView(leaf, actions, this, this.settings);
       }
+    );
+
+    // 리본 아이콘 - Control Panel
+    this.addRibbonIcon('layout-dashboard', 'Open Didymos Control Panel', async () => {
+      await this.activateControlPanelView();
     });
 
-    // 명령: Graph 패널 열기
+    // 메인 명령: Control Panel (모든 기능을 한 곳에서)
     this.addCommand({
-      id: 'open-graph-panel',
-      name: 'Open Knowledge Graph',
+      id: 'open-control-panel',
+      name: 'Open Didymos Control Panel',
       callback: async () => {
-        await this.activateGraphView();
-      }
-    });
-
-    // 명령: Task 패널 열기
-    this.addCommand({
-      id: 'open-task-panel',
-      name: 'Open Task Panel',
-      callback: async () => {
-        await this.activateTaskView();
-      }
-    });
-
-    // 명령: Weekly Review
-    this.addCommand({
-      id: 'open-review-panel',
-      name: 'Open Weekly Review',
-      callback: async () => {
-        await this.activateReviewView();
-      }
-    });
-
-    // 명령: Ontology 스냅샷 내보내기
-    this.addCommand({
-      id: 'export-ontology-snapshot',
-      name: 'Export Ontology Snapshot',
-      callback: async () => {
-        const file = this.app.workspace.getActiveFile();
-        if (!file) {
-          new Notice('No active note to export');
-          return;
-        }
-        await this.exportOntologySnapshot(file);
-      }
-    });
-
-    // 명령: 의사결정 노트 생성
-    this.addCommand({
-      id: 'generate-decision-note',
-      name: 'Generate Decision Note',
-      callback: async () => {
-        const file = this.app.workspace.getActiveFile();
-        if (!file) {
-          new Notice('No active note to generate decision note');
-          return;
-        }
-        await this.generateDecisionNote(file);
-      }
-    });
-
-    // 명령: Decision Panel 열기
-    this.addCommand({
-      id: 'open-decision-panel',
-      name: 'Open Decision Dashboard',
-      callback: async () => {
-        await this.activateDecisionView();
+        await this.activateControlPanelView();
       }
     });
 
     if (this.settings.bulkProcessOnStart) {
       await this.bulkProcessVault();
     }
-
-    // Command: Manual sync
-    this.addCommand({
-      id: 'sync-current-note',
-      name: 'Sync current note to Didymos',
-      callback: async () => {
-        const file = this.app.workspace.getActiveFile();
-        if (file) {
-          await this.syncNote(file);
-        } else {
-          new Notice('No active file to sync');
-        }
-      }
-    });
 
     // Auto-sync on file modification
     if (this.settings.autoSync && this.settings.syncMode === 'realtime' && this.settings.premiumRealtime) {
@@ -271,14 +224,20 @@ export default class DidymosPlugin extends Plugin {
       return;
     }
     new Notice(`Bulk processing ${files.length} notes...`);
+    let processed = 0;
     for (const file of files) {
       try {
         await this.syncNote(file);
+        processed++;
+        // Only show progress at 10-unit increments
+        if (processed % 10 === 0) {
+          new Notice(`Progress: ${processed}/${files.length} notes processed`);
+        }
       } catch (e) {
         console.error(`Bulk sync failed for ${file.path}:`, e);
       }
     }
-    new Notice("Bulk processing complete");
+    new Notice(`Bulk processing complete: ${processed}/${files.length} notes`);
   }
 
   async exportOntologySnapshot(file: TFile) {
@@ -620,6 +579,24 @@ export default class DidymosPlugin extends Plugin {
     }
   }
 
+  async activateUnifiedView() {
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(UNIFIED_VIEW_TYPE)[0] ?? null;
+
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) {
+        await leaf.setViewState({
+          type: UNIFIED_VIEW_TYPE,
+          active: true,
+        });
+      }
+    }
+    if (leaf) {
+      workspace.revealLeaf(leaf);
+    }
+  }
+
   async activateContextView() {
     const { workspace } = this.app;
     let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(DIDYMOS_CONTEXT_VIEW_TYPE)[0] ?? null;
@@ -711,6 +688,205 @@ export default class DidymosPlugin extends Plugin {
     if (leaf) {
       workspace.revealLeaf(leaf);
     }
+  }
+
+  async activateInsightsView() {
+    const { workspace } = this.app;
+    let leaf: WorkspaceLeaf | null = workspace.getLeavesOfType(INSIGHTS_VIEW_TYPE)[0] ?? null;
+
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) {
+        await leaf.setViewState({
+          type: INSIGHTS_VIEW_TYPE,
+          active: true,
+        });
+      }
+    }
+    if (leaf) {
+      workspace.revealLeaf(leaf);
+    }
+  }
+
+  /**
+   * 온보딩 모달 표시
+   */
+  async showOnboarding() {
+    new OnboardingModal(
+      this.app,
+      this.templateService,
+      async () => {
+        this.settings.onboardingCompleted = true;
+        await this.saveSettings();
+        new Notice('Welcome to Didymos! 🎉');
+      }
+    ).open();
+  }
+
+  /**
+   * Control Panel View 활성화
+   */
+  async activateControlPanelView() {
+    const { workspace } = this.app;
+
+    let leaf: WorkspaceLeaf | null = null;
+    const leaves = workspace.getLeavesOfType(CONTROL_PANEL_VIEW_TYPE);
+
+    if (leaves.length > 0) {
+      // 이미 열려있으면 해당 leaf로 이동
+      leaf = leaves[0];
+    } else {
+      // 새로 열기 - 오른쪽 사이드바에
+      leaf = workspace.getRightLeaf(false);
+      if (leaf) {
+        await leaf.setViewState({ type: CONTROL_PANEL_VIEW_TYPE, active: true });
+      }
+    }
+
+    if (leaf) {
+      workspace.revealLeaf(leaf);
+    }
+  }
+
+  /**
+   * Control Panel Actions 가져오기
+   */
+  getControlPanelActions(): ControlPanelAction[] {
+    return [
+      // Views - with viewType for inline embedding
+      {
+        id: 'open-unified-panel',
+        name: 'Didymos Dashboard',
+        description: '통합 대시보드 열기',
+        icon: '🏠',
+        category: 'views',
+        viewType: UNIFIED_VIEW_TYPE,
+        callback: async () => await this.activateUnifiedView(),
+      },
+      {
+        id: 'open-context-panel',
+        name: 'Context Panel',
+        description: '현재 노트의 관련 컨텍스트 보기',
+        icon: '🔍',
+        category: 'views',
+        viewType: DIDYMOS_CONTEXT_VIEW_TYPE,
+        callback: async () => await this.activateContextView(),
+      },
+      {
+        id: 'open-graph-panel',
+        name: 'Knowledge Graph',
+        description: '지식 그래프 시각화',
+        icon: '🕸️',
+        category: 'views',
+        viewType: DIDYMOS_GRAPH_VIEW_TYPE,
+        callback: async () => await this.activateGraphView(),
+      },
+      {
+        id: 'open-task-panel',
+        name: 'Task Panel',
+        description: '작업 목록 보기',
+        icon: '✅',
+        category: 'views',
+        viewType: DIDYMOS_TASK_VIEW_TYPE,
+        callback: async () => await this.activateTaskView(),
+      },
+      {
+        id: 'open-review-panel',
+        name: 'Weekly Review',
+        description: '주간 리뷰 보기',
+        icon: '📊',
+        category: 'views',
+        viewType: DIDYMOS_REVIEW_VIEW_TYPE,
+        callback: async () => await this.activateReviewView(),
+      },
+      {
+        id: 'open-decision-panel',
+        name: 'Decision Dashboard',
+        description: '의사결정 대시보드',
+        icon: '🎯',
+        category: 'views',
+        viewType: DIDYMOS_DECISION_VIEW_TYPE,
+        callback: async () => await this.activateDecisionView(),
+      },
+      {
+        id: 'open-insights-panel',
+        name: 'Knowledge Insights',
+        description: '지식 인사이트 패널',
+        icon: '💡',
+        category: 'views',
+        viewType: INSIGHTS_VIEW_TYPE,
+        callback: async () => await this.activateInsightsView(),
+      },
+      // Actions
+      {
+        id: 'sync-current-note',
+        name: 'Sync Current Note',
+        description: '현재 노트를 Didymos에 동기화',
+        icon: '🔄',
+        category: 'sync',
+        callback: async () => {
+          const file = this.app.workspace.getActiveFile();
+          if (file) {
+            await this.syncNote(file);
+          } else {
+            new Notice('No active file to sync');
+          }
+        },
+      },
+      {
+        id: 'export-ontology-snapshot',
+        name: 'Export Ontology',
+        description: '온톨로지 스냅샷 내보내기',
+        icon: '📤',
+        category: 'actions',
+        callback: async () => {
+          const file = this.app.workspace.getActiveFile();
+          if (!file) {
+            new Notice('No active note to export');
+            return;
+          }
+          await this.exportOntologySnapshot(file);
+        },
+      },
+      {
+        id: 'generate-decision-note',
+        name: 'Generate Decision Note',
+        description: '의사결정 노트 생성',
+        icon: '📝',
+        category: 'actions',
+        callback: async () => {
+          const file = this.app.workspace.getActiveFile();
+          if (!file) {
+            new Notice('No active note to generate decision note');
+            return;
+          }
+          await this.generateDecisionNote(file);
+        },
+      },
+      // Templates
+      {
+        id: 'open-template-gallery',
+        name: 'Template Gallery',
+        description: '노트 템플릿 갤러리',
+        icon: '📚',
+        category: 'templates',
+        callback: () => {
+          new TemplateGalleryModal(
+            this.app,
+            this.templateService,
+            () => {}
+          ).open();
+        },
+      },
+      {
+        id: 'show-onboarding',
+        name: 'Show Onboarding',
+        description: '온보딩 가이드 다시 보기',
+        icon: '🎉',
+        category: 'templates',
+        callback: async () => await this.showOnboarding(),
+      },
+    ];
   }
 }
 

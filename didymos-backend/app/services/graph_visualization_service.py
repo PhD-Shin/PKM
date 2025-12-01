@@ -313,44 +313,68 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
 
         # Now get the graph for these notes
         note_ids = [r["note_id"] for r in note_results]
+        logger.info(f"Found {len(note_ids)} notes, first 5: {note_ids[:5]}")
 
+        # Simpler query: get notes and their direct entities
         cypher_graph = """
         MATCH (n:Note)
         WHERE n.note_id IN $note_ids
+        WITH n
         OPTIONAL MATCH (n)-[r:MENTIONS]->(entity)
-        RETURN COLLECT(DISTINCT {
-                   id: n.note_id,
-                   label: n.title,
-                   type: 'Note',
-                   properties: properties(n)
-               }) +
-               [e IN COLLECT(DISTINCT entity) WHERE e IS NOT NULL | {
-                   id: e.id,
-                   label: e.id,
-                   type: labels(e)[0],
-                   properties: properties(e)
-               }] AS nodes,
-               [rel IN COLLECT(DISTINCT r) WHERE rel IS NOT NULL | {
-                   from: startNode(rel).note_id,
-                   to: endNode(rel).id,
-                   type: type(rel),
-                   label: type(rel)
-               }] AS edges
+
+        WITH n, COLLECT(DISTINCT entity) AS entities, COLLECT(DISTINCT r) AS relationships
+
+        RETURN
+            COLLECT(DISTINCT {
+                id: n.note_id,
+                label: COALESCE(n.title, n.note_id),
+                type: 'Note',
+                properties: properties(n)
+            }) AS noteNodes,
+
+            REDUCE(s = [], entity IN entities |
+                CASE WHEN entity IS NOT NULL
+                THEN s + [{
+                    id: entity.id,
+                    label: COALESCE(entity.name, entity.title, entity.id),
+                    type: labels(entity)[0],
+                    properties: properties(entity)
+                }]
+                ELSE s END
+            ) AS entityNodes,
+
+            REDUCE(s = [], rel IN relationships |
+                CASE WHEN rel IS NOT NULL
+                THEN s + [{
+                    from: startNode(rel).note_id,
+                    to: endNode(rel).id,
+                    type: type(rel),
+                    label: type(rel)
+                }]
+                ELSE s END
+            ) AS edges
         """
 
         graph_results = client.query(cypher_graph, {"note_ids": note_ids})
 
         if not graph_results or len(graph_results) == 0:
+            logger.warning(f"Graph query returned no results for {len(note_ids)} note_ids")
             return {"nodes": [], "edges": []}
 
         result = graph_results[0]
-        nodes = result.get("nodes", [])
+        # Combine noteNodes and entityNodes
+        note_nodes = result.get("noteNodes", [])
+        entity_nodes = result.get("entityNodes", [])
         edges = result.get("edges", [])
 
-        logger.info(f"Found {len(nodes)} nodes and {len(edges)} edges")
+        all_nodes = note_nodes + entity_nodes
+
+        logger.info(f"Graph query result: {len(note_nodes)} note nodes, {len(entity_nodes)} entity nodes, {len(edges)} edges")
+        if len(all_nodes) == 0:
+            logger.warning(f"Graph query returned empty nodes list. Result keys: {result.keys()}")
 
         return {
-            "nodes": nodes,
+            "nodes": all_nodes,
             "edges": edges
         }
 
