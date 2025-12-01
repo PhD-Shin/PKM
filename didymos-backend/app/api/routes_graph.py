@@ -173,6 +173,7 @@ async def get_entities_graph_view(
 async def get_clustered_vault_graph(
     vault_id: str = Query(..., description="Vault ID"),
     user_token: str = Query(..., description="User token"),
+    folder_prefix: str = Query(None, description="폴더 경로 필터 (예: '1_프로젝트/', '2_연구/')"),
     force_recompute: bool = Query(False, description="캐시 무시하고 재계산"),
     target_clusters: int = Query(10, ge=3, le=50, description="목표 클러스터 개수"),
     include_llm: bool = Query(False, description="LLM 요약 포함 (느림)"),
@@ -246,8 +247,11 @@ async def get_clustered_vault_graph(
                 computation_method="background_warmup"
             )
 
-        # 캐시 확인
-        if not force_recompute:
+        # 캐시 키에 folder_prefix 포함
+        cache_key = f"{vault_id}:{folder_prefix or 'all'}"
+
+        # 캐시 확인 (folder_prefix가 있으면 캐시 스킵 - 폴더별 캐시는 별도 구현 필요)
+        if not force_recompute and not folder_prefix:
             cached = get_cached_clusters(client, vault_id)
             if cached and not is_cluster_cache_stale(client, vault_id, cached.get("computed_at")):
                 logger.info(f"✅ Returning cached clusters for vault {vault_id}")
@@ -265,20 +269,23 @@ async def get_clustered_vault_graph(
                 logger.info(f"♻️ Cache stale for vault {vault_id}, recomputing...")
 
         # 클러스터 계산 (방법 선택)
-        logger.info(f"🔄 Computing clusters for vault {vault_id} using method={method}")
+        folder_info = f" in folder '{folder_prefix}'" if folder_prefix else ""
+        logger.info(f"🔄 Computing clusters for vault {vault_id}{folder_info} using method={method}")
         method_normalized = method.lower()
 
         if method_normalized in ["semantic", "auto"]:
             result = compute_clusters_semantic(
                 client=client,
                 vault_id=vault_id,
-                target_clusters=target_clusters
+                target_clusters=target_clusters,
+                folder_prefix=folder_prefix
             )
         elif method_normalized in ["type_based", "type"]:
             result = compute_clusters_louvain(
                 client=client,
                 vault_id=vault_id,
-                target_clusters=target_clusters
+                target_clusters=target_clusters,
+                folder_prefix=folder_prefix
             )
         else:
             raise HTTPException(status_code=400, detail="Invalid clustering method")
@@ -289,7 +296,8 @@ async def get_clustered_vault_graph(
             result = compute_clusters_louvain(
                 client=client,
                 vault_id=vault_id,
-                target_clusters=target_clusters
+                target_clusters=target_clusters,
+                folder_prefix=folder_prefix
             )
             result["method"] = "semantic_fallback"
 
@@ -301,8 +309,9 @@ async def get_clustered_vault_graph(
             logger.info("🤖 Generating LLM summaries with GPT-5 Mini...")
             clusters = generate_llm_summaries(client, vault_id, clusters)
 
-        # 캐시 저장
-        save_cluster_cache(client, vault_id, clusters, result["method"], edges=edges)
+        # 캐시 저장 (folder_prefix 없을 때만)
+        if not folder_prefix:
+            save_cluster_cache(client, vault_id, clusters, result["method"], edges=edges)
 
         return ClusteredGraphResponse(
             status="success",
@@ -347,4 +356,48 @@ async def invalidate_clusters(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to invalidate cache: {str(e)}"
+        )
+
+
+@router.get("/vault/folders")
+async def get_vault_folders(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+):
+    """
+    Vault 내 폴더 목록 조회 (PARA 노트 기법 지원)
+
+    폴더별 노트 개수와 함께 반환합니다.
+    """
+    try:
+        # 노트 경로에서 폴더 추출
+        cypher = """
+        MATCH (v:Vault {id: $vault_id})-[:HAS_NOTE]->(n:Note)
+        WITH n.note_id AS note_id
+        WITH split(note_id, '/')[0] AS folder
+        WHERE folder IS NOT NULL AND folder <> ''
+        RETURN folder, count(*) AS note_count
+        ORDER BY note_count DESC
+        """
+
+        result = client.query(cypher, {"vault_id": vault_id})
+
+        folders = [
+            {"folder": r["folder"], "note_count": r["note_count"]}
+            for r in (result or [])
+        ]
+
+        return {
+            "status": "success",
+            "vault_id": vault_id,
+            "total_folders": len(folders),
+            "folders": folders
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get vault folders: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get folders: {str(e)}"
         )

@@ -24,7 +24,8 @@ def compute_clusters_louvain(
     client,
     vault_id: str,
     target_clusters: int = 10,
-    include_types: List[str] = ["Topic", "Project", "Task"]
+    include_types: List[str] = ["Topic", "Project", "Task"],
+    folder_prefix: str = None
 ) -> Dict[str, Any]:
     """
     Louvain 알고리즘을 사용한 커뮤니티 탐지
@@ -34,6 +35,7 @@ def compute_clusters_louvain(
         vault_id: Vault ID
         target_clusters: 목표 클러스터 개수
         include_types: 클러스터링에 포함할 노드 타입
+        folder_prefix: 폴더 경로 필터 (예: '1_프로젝트/')
 
     Returns:
         클러스터 데이터
@@ -41,18 +43,25 @@ def compute_clusters_louvain(
     try:
         # Step 1: 서브그래프 투영 (Notes 제외, Entities만)
         type_filter = " OR ".join([f"'{t}' IN labels(entity)" for t in include_types])
+        folder_filter = ""
+        if folder_prefix:
+            folder_filter = "AND note.note_id STARTS WITH $folder_prefix"
 
         cypher_projection = f"""
         MATCH (v:Vault {{id: $vault_id}})-[:HAS_NOTE]->(note:Note)
         MATCH (note)-[r:MENTIONS]->(entity)
-        WHERE {type_filter}
+        WHERE ({type_filter}) {folder_filter}
         WITH entity, COUNT(DISTINCT note) as mention_count
         WHERE mention_count > 0
         RETURN entity.id as entity_id, labels(entity)[0] as type, mention_count
         LIMIT 1000
         """
 
-        entities = client.query(cypher_projection, {"vault_id": vault_id})
+        params = {"vault_id": vault_id}
+        if folder_prefix:
+            params["folder_prefix"] = folder_prefix
+
+        entities = client.query(cypher_projection, params)
 
         if not entities or len(entities) == 0:
             logger.warning(f"No entities found for vault {vault_id}")
@@ -75,12 +84,13 @@ def compute_clusters_louvain(
         WHERE id(e1) < id(e2)
           AND ({type_filter_e1})
           AND ({type_filter_e2})
+          {folder_filter}
         WITH e1, e2, COUNT(DISTINCT note) as shared_notes
         WHERE shared_notes > 0
         RETURN e1.id as from_id, e2.id as to_id, shared_notes as weight
         """
 
-        relations = client.query(cypher_relations, {"vault_id": vault_id})
+        relations = client.query(cypher_relations, params)
 
         # Step 3: 간단한 클러스터링 (Neo4j GDS 없이 Python에서 처리)
         # 실제로는 networkx 또는 Neo4j GDS를 사용해야 하지만,
@@ -160,7 +170,8 @@ def compute_clusters_semantic(
     client,
     vault_id: str,
     target_clusters: int = 10,
-    include_types: List[str] = ["Topic", "Project", "Task"]
+    include_types: List[str] = ["Topic", "Project", "Task"],
+    folder_prefix: str = None
 ) -> Dict[str, Any]:
     """
     UMAP + HDBSCAN을 사용한 의미론적 클러스터링
@@ -172,6 +183,7 @@ def compute_clusters_semantic(
         vault_id: Vault ID
         target_clusters: 목표 클러스터 개수 (참고용, HDBSCAN이 자동 결정)
         include_types: 클러스터링에 포함할 노드 타입
+        folder_prefix: 폴더 경로 필터 (예: '1_프로젝트/')
 
     Returns:
         클러스터 데이터
@@ -183,21 +195,30 @@ def compute_clusters_semantic(
             vault_id,
             target_clusters,
             include_types,
-            reason="dependency_missing"
+            reason="dependency_missing",
+            folder_prefix=folder_prefix
         )
 
     try:
-        # Step 1: Neo4j에서 노트 임베딩 가져오기 (엔티티가 아닌 노트!)
-        cypher_embeddings = """
-        MATCH (v:Vault {id: $vault_id})-[:HAS_NOTE]->(note:Note)
-        WHERE note.embedding IS NOT NULL
+        # Step 1: Neo4j에서 노트 임베딩 가져오기 (폴더 필터 적용)
+        folder_filter = ""
+        if folder_prefix:
+            folder_filter = "AND note.note_id STARTS WITH $folder_prefix"
+
+        cypher_embeddings = f"""
+        MATCH (v:Vault {{id: $vault_id}})-[:HAS_NOTE]->(note:Note)
+        WHERE note.embedding IS NOT NULL {folder_filter}
         RETURN note.note_id as note_id,
                note.title as note_title,
                toString(note.updated_at) as updated_at,
                note.embedding as embedding
         """
 
-        results = client.query(cypher_embeddings, {"vault_id": vault_id})
+        params = {"vault_id": vault_id}
+        if folder_prefix:
+            params["folder_prefix"] = folder_prefix
+
+        results = client.query(cypher_embeddings, params)
 
         if not results or len(results) == 0:
             logger.warning(f"No notes with embeddings found for vault {vault_id}")
@@ -206,7 +227,8 @@ def compute_clusters_semantic(
                 vault_id,
                 target_clusters,
                 include_types,
-                reason="no_embeddings"
+                reason="no_embeddings",
+                folder_prefix=folder_prefix
             )
 
         # Step 2: 임베딩 배열로 변환
@@ -224,7 +246,8 @@ def compute_clusters_semantic(
                 vault_id,
                 target_clusters,
                 include_types,
-                reason="insufficient_samples"
+                reason="insufficient_samples",
+                folder_prefix=folder_prefix
             )
 
         logger.info(f"Found {len(embeddings)} notes with embeddings (shape: {embeddings.shape})")
@@ -281,7 +304,8 @@ def compute_clusters_semantic(
                 vault_id,
                 target_clusters,
                 include_types,
-                reason="no_clusters"
+                reason="no_clusters",
+                folder_prefix=folder_prefix
             )
 
         # Step 5: 각 클러스터에서 언급된 엔티티 집계
@@ -372,7 +396,8 @@ def compute_clusters_semantic(
                 vault_id,
                 target_clusters,
                 include_types,
-                reason="empty_result"
+                reason="empty_result",
+                folder_prefix=folder_prefix
             )
 
         edges = _build_cluster_edges(clusters)
@@ -392,7 +417,8 @@ def compute_clusters_semantic(
             vault_id,
             target_clusters,
             include_types,
-            reason="exception"
+            reason="exception",
+            folder_prefix=folder_prefix
         )
 
 
@@ -401,7 +427,8 @@ def _semantic_fallback_to_type_based(
     vault_id: str,
     target_clusters: int,
     include_types: List[str],
-    reason: str
+    reason: str,
+    folder_prefix: str = None
 ) -> Dict[str, Any]:
     """
     의미론적 클러스터링 실패 시 타입 기반으로 폴백
@@ -411,7 +438,8 @@ def _semantic_fallback_to_type_based(
         client=client,
         vault_id=vault_id,
         target_clusters=target_clusters,
-        include_types=include_types
+        include_types=include_types,
+        folder_prefix=folder_prefix
     )
     fallback["method"] = f"umap_hdbscan_fallback:{reason}"
     return fallback
