@@ -57,12 +57,13 @@ async def sync_note(payload: NoteSyncRequest):
         if content_for_ai:
             try:
                 # 1. 엔티티 추출
+                logger.info(f"Starting entity extraction for note: {payload.note.note_id[:50]}...")
                 extracted_nodes = process_note_to_graph(
                     note_id=payload.note.note_id,
                     content=content_for_ai,
                     metadata={"tags": payload.note.tags}
                 )
-                logger.info(f"Extracted {extracted_nodes} entities from note")
+                logger.info(f"✅ Extracted {extracted_nodes} entities from note")
 
                 # 2. 임베딩 생성 및 저장
                 from app.services.vector_service import store_note_embedding
@@ -73,7 +74,7 @@ async def sync_note(payload: NoteSyncRequest):
                 )
 
             except Exception as e:
-                logger.error(f"AI processing failed: {e}")
+                logger.error(f"❌ AI processing failed for note: {e}", exc_info=True)
                 # 추출 실패해도 노트 저장은 성공으로 처리
 
         # 캐시 무효화
