@@ -102,6 +102,10 @@ def get_note_graph_vis(note_id: str, hops: int = 1):
             nodes.extend(related_nodes)
             edges.extend(related_edges)
 
+        # Entity 간 관계 추가 (RELATED_TO, PART_OF 등)
+        entity_rel_edges = _get_entity_relationships(client, note_id)
+        edges.extend(entity_rel_edges)
+
         uniq_nodes = {}
         for n in nodes:
             if n and n.get("id"):
@@ -270,6 +274,45 @@ def _get_related_notes(client, note_id: str):
             "dashes": True,
         })
     return nodes, edges
+
+
+def _get_entity_relationships(client, note_id: str):
+    """
+    노트에 연결된 엔티티 간의 관계 가져오기 (RELATED_TO, PART_OF 등)
+    """
+    cypher = """
+    MATCH (n:Note {note_id: $note_id})-[:MENTIONS]->(e1)
+    MATCH (e1)-[r]->(e2)
+    WHERE type(r) IN ['RELATED_TO', 'PART_OF', 'HAS_TASK', 'ASSIGNED_TO', 'BROADER', 'NARROWER']
+    RETURN
+        e1.id AS from_id,
+        labels(e1)[0] AS from_type,
+        e2.id AS to_id,
+        labels(e2)[0] AS to_type,
+        type(r) AS rel_type
+    """
+    records = client.query(cypher, {"note_id": note_id}) or []
+    edges = []
+    for record in records:
+        from_id = record.get("from_id")
+        from_type = record.get("from_type", "").lower()
+        to_id = record.get("to_id")
+        to_type = record.get("to_type", "").lower()
+        rel_type = record.get("rel_type")
+
+        # Entity ID에 타입 prefix 추가 (topic_, project_, task_)
+        from_prefixed = f"{from_type}_{from_id}" if from_type else from_id
+        to_prefixed = f"{to_type}_{to_id}" if to_type else to_id
+
+        edges.append({
+            "from": from_prefixed,
+            "to": to_prefixed,
+            "label": rel_type.lower().replace("_", " "),
+            "arrows": "to",
+            "color": "#6B7280",
+            "dashes": True,
+        })
+    return edges
 
 
 def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
