@@ -26,15 +26,28 @@ class Settings(BaseSettings):
     openai_api_key: str
 
     # CORS
-    cors_origins: str = '["http://localhost:8000", "app://obsidian.md"]'
+    cors_origins: str = '["*"]'
 
     @property
     def cors_origins_list(self) -> List[str]:
         """CORS origins를 리스트로 반환"""
+        # Obsidian Desktop은 app://obsidian.md origin 사용
+        # 개발/프로덕션 모두 호환하도록 "*" 허용
+        default_origins = [
+            "*",  # 모든 origin 허용 (Obsidian Desktop 호환)
+            "http://localhost:8000",
+            "http://localhost:3000",
+            "app://obsidian.md",
+            "capacitor://localhost",  # Obsidian Mobile
+        ]
         try:
-            return json.loads(self.cors_origins)
+            custom_origins = json.loads(self.cors_origins)
+            # "*"가 포함되어 있으면 모든 origin 허용
+            if "*" in custom_origins:
+                return ["*"]
+            return list(set(default_origins + custom_origins))
         except:
-            return ["http://localhost:8000", "app://obsidian.md"]
+            return default_origins
 
     class Config:
         env_file = ".env"
