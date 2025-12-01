@@ -251,13 +251,18 @@ def compute_clusters_semantic(
         # Step 4: HDBSCAN 클러스터링
         logger.info("Running HDBSCAN clustering...")
 
-        # min_cluster_size는 노트 수에 따라 동적 조정
-        min_cluster_size = max(2, len(embeddings) // target_clusters)
+        # 더 세분화된 클러스터링을 위한 파라미터 조정
+        # - min_cluster_size: 작을수록 더 많은 작은 클러스터 허용
+        # - min_samples: 1이면 노이즈 최소화
+        # - cluster_selection_epsilon: 작을수록 더 세분화됨
+        n_samples = len(embeddings)
+        min_cluster_size = max(5, n_samples // 50)  # 더 작은 클러스터 허용 (5개 또는 노트의 2%)
 
         clusterer = hdbscan.HDBSCAN(
             min_cluster_size=min_cluster_size,
-            min_samples=1,
-            cluster_selection_epsilon=0.5,
+            min_samples=2,
+            cluster_selection_epsilon=0.1,  # 더 세분화
+            cluster_selection_method='eom',  # Excess of Mass - 계층적 클러스터링에 적합
             metric='euclidean'
         )
         cluster_labels = clusterer.fit_predict(reduced_embeddings)
