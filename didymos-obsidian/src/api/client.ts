@@ -280,6 +280,7 @@ export class DidymosAPI {
       targetClusters?: number;
       includeLLM?: boolean;
       method?: "semantic" | "type_based" | "auto";
+      folderPrefix?: string;  // 폴더 필터 추가
     }
   ): Promise<ClusteredGraphData> {
     const url = new URL(this.baseUrl("/graph/vault/clustered"));
@@ -298,6 +299,24 @@ export class DidymosAPI {
     if (options?.method) {
       url.searchParams.set("method", options.method);
     }
+    if (options?.folderPrefix) {
+      url.searchParams.set("folder_prefix", options.folderPrefix);
+    }
+
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  async fetchVaultFolders(vaultId: string): Promise<{
+    status: string;
+    vault_id: string;
+    total_folders: number;
+    folders: Array<{ folder: string; note_count: number }>;
+  }> {
+    const url = new URL(this.baseUrl("/graph/vault/folders"));
+    url.searchParams.set("vault_id", vaultId);
+    url.searchParams.set("user_token", this.settings.userToken);
 
     const response = await fetch(url.toString());
     if (!response.ok) throw new Error(`API error: ${response.status}`);

@@ -1721,3 +1721,70 @@
   color: var(--text-muted);
 }
 
+/* Folder Filter Controls (PARA Support) */
+.didymos-folder-controls {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px;
+  background-color: var(--background-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.didymos-folder-controls > span {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--text-muted);
+  padding-top: 4px;
+}
+
+.didymos-folder-select {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 400px;
+}
+
+.didymos-folder-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background-color: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  font-size: 0.85em;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.didymos-folder-option:hover {
+  background-color: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+}
+
+.didymos-folder-option input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+}
+
+.didymos-folder-option input[type="checkbox"]:checked + span {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
+
+.didymos-folder-loading,
+.didymos-folder-empty,
+.didymos-folder-error {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 4px 8px;
+}
+
+.didymos-folder-error {
+  color: var(--text-error);
+}
+

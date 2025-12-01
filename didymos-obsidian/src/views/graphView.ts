@@ -29,6 +29,9 @@ export class DidymosGraphView extends ItemView {
   clusterForceRecompute: boolean = false; // 캐시 무시 여부
   clusterStatusEl: HTMLElement | null = null;
   clusterDetailEl: HTMLElement | null = null;
+  selectedFolders: string[] = [];  // 선택된 폴더 목록
+  availableFolders: Array<{ folder: string; note_count: number }> = [];  // 사용 가능한 폴더 목록
+  folderSelectEl: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, settings: DidymosSettings, plugin: Plugin) {
     super(leaf);
@@ -143,6 +146,16 @@ export class DidymosGraphView extends ItemView {
         await this.renderVaultGraph();
       }
     });
+
+    // 폴더 필터 컨트롤 (PARA 노트 기법 지원)
+    const folderControls = controls.createEl("div", { cls: "didymos-folder-controls" });
+    folderControls.createEl("span", { text: "📁 Folder Filter" });
+
+    this.folderSelectEl = folderControls.createEl("div", { cls: "didymos-folder-select" });
+    this.folderSelectEl.createEl("span", { text: "Loading folders...", cls: "didymos-folder-loading" });
+
+    // 폴더 목록 로드
+    this.loadFolders();
 
     // Auto/Manual Hops Toggle
     const hopControlGroup = controls.createEl("div", { cls: "didymos-hop-control-group" });
@@ -440,6 +453,72 @@ export class DidymosGraphView extends ItemView {
     return 1;
   }
 
+  /**
+   * 폴더 목록 로드 및 UI 업데이트
+   */
+  async loadFolders() {
+    if (!this.folderSelectEl) return;
+
+    try {
+      const foldersData = await this.api.fetchVaultFolders(this.settings.vaultId);
+      this.availableFolders = foldersData.folders;
+
+      // UI 업데이트
+      this.folderSelectEl.empty();
+
+      if (this.availableFolders.length === 0) {
+        this.folderSelectEl.createEl("span", { text: "No folders found", cls: "didymos-folder-empty" });
+        return;
+      }
+
+      // "All Folders" 옵션
+      const allLabel = this.folderSelectEl.createEl("label", { cls: "didymos-folder-option" });
+      const allCheckbox = allLabel.createEl("input", { type: "checkbox" });
+      allCheckbox.checked = this.selectedFolders.length === 0;
+      allLabel.createSpan({ text: `All (${foldersData.folders.reduce((sum, f) => sum + f.note_count, 0)} notes)` });
+
+      allCheckbox.addEventListener("change", async () => {
+        if (allCheckbox.checked) {
+          this.selectedFolders = [];
+          // 다른 체크박스 해제
+          this.folderSelectEl?.querySelectorAll("input[type='checkbox']").forEach((cb: HTMLInputElement) => {
+            if (cb !== allCheckbox) cb.checked = false;
+          });
+          await this.renderVaultGraph();
+        }
+      });
+
+      // 각 폴더 옵션
+      for (const folder of this.availableFolders) {
+        const label = this.folderSelectEl.createEl("label", { cls: "didymos-folder-option" });
+        const checkbox = label.createEl("input", { type: "checkbox" });
+        checkbox.checked = this.selectedFolders.includes(folder.folder);
+        label.createSpan({ text: `${folder.folder} (${folder.note_count})` });
+
+        checkbox.addEventListener("change", async () => {
+          if (checkbox.checked) {
+            // All 체크박스 해제
+            allCheckbox.checked = false;
+            if (!this.selectedFolders.includes(folder.folder)) {
+              this.selectedFolders.push(folder.folder);
+            }
+          } else {
+            this.selectedFolders = this.selectedFolders.filter(f => f !== folder.folder);
+            if (this.selectedFolders.length === 0) {
+              allCheckbox.checked = true;
+            }
+          }
+          await this.renderVaultGraph();
+        });
+      }
+
+    } catch (error) {
+      console.error("Failed to load folders:", error);
+      this.folderSelectEl.empty();
+      this.folderSelectEl.createEl("span", { text: "Failed to load folders", cls: "didymos-folder-error" });
+    }
+  }
+
   async renderVaultGraph() {
     const graphContainer = this.containerEl.querySelector(
       "#didymos-graph-network"
@@ -463,20 +542,25 @@ export class DidymosGraphView extends ItemView {
 
       // 클러스터링 활성화 시 클러스터 API 사용
       if (this.enableClustering) {
+        // 선택된 폴더가 있으면 첫 번째 폴더로 필터링 (여러 폴더 선택 시 첫 번째만 사용)
+        const folderPrefix = this.selectedFolders.length > 0 ? this.selectedFolders[0] + "/" : undefined;
+
         const clusteredData: ClusteredGraphData = await this.api.fetchClusteredGraph(
           this.settings.vaultId,
           {
             targetClusters: 10,
             includeLLM: this.includeClusterLLM,
             forceRecompute: this.clusterForceRecompute,
-            method: this.clusterMethod
+            method: this.clusterMethod,
+            folderPrefix: folderPrefix
           }
         );
         this.clusterForceRecompute = false;
 
+        const folderInfo = folderPrefix ? ` • Folder: ${this.selectedFolders[0]}` : "";
         if (this.clusterStatusEl) {
           this.clusterStatusEl.setText(
-            `Clusters: ${clusteredData.cluster_count} • Nodes: ${clusteredData.total_nodes} • Method: ${clusteredData.computation_method}${this.includeClusterLLM ? " + LLM" : ""}`
+            `Clusters: ${clusteredData.cluster_count} • Nodes: ${clusteredData.total_nodes} • Method: ${clusteredData.computation_method}${this.includeClusterLLM ? " + LLM" : ""}${folderInfo}`
           );
         }
 
