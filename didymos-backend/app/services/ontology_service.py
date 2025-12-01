@@ -54,25 +54,50 @@ llm = ChatOpenAI(
 
 # 엔티티 추출 추가 지침 (additional_instructions로 전달)
 ENTITY_EXTRACTION_INSTRUCTIONS = """
-IMPORTANT GUIDELINES for Korean PKM notes:
+You are extracting CORE CONCEPTS from personal knowledge management notes.
 
-1. **Entity Normalization**: Always use the most common, full name for entities.
-   - Use "서울대학교" not "서울대" or "SNU"
-   - Use full names for people: "홍길동" not "홍 교수" or "길동씨"
+**CRITICAL: Focus on what the note is ABOUT, not what it merely MENTIONS.**
 
-2. **Type Consistency**: Each entity should have ONE type only.
-   - Organizations/Universities → Topic (not Person)
-   - People (actual individuals) → Person
-   - Action items with deadlines → Task
-   - Multi-step initiatives → Project
+## What to Extract (ONLY these):
+1. **Topic**: The MAIN SUBJECT of this note. What is this note discussing?
+   - Extract the primary theme or concept being explored
+   - NOT background context or passing references
+   - Example: A note about "transformer architecture" should extract "Transformer Architecture" as Topic
+   - NOT "서울대학교" just because the author works there
 
-3. **Avoid Over-extraction**:
-   - Don't extract generic terms like "연구", "논문", "프로젝트" alone
-   - Extract specific, named entities only
-   - "서울대 박사" or "서울대 이학박사" is NOT a Person entity
-   - Descriptions like "AI 연구원" are NOT entities
+2. **Project**: Only if this note is ABOUT a specific project
+   - The note must be dedicated to describing/planning the project
+   - NOT projects merely mentioned in passing
 
-4. **Quality over Quantity**: Extract fewer, more meaningful entities.
+3. **Task**: Only explicit action items with clear deliverables
+   - Must have specific outcomes
+   - NOT vague intentions
+
+4. **Person**: Only if this person is CENTRAL to the note's content
+   - The note discusses their work, ideas, or collaboration
+   - NOT just mentioned in credentials or background
+
+## What NOT to Extract:
+- Institutional affiliations (서울대학교, MIT, Google) unless the note is ABOUT that institution
+- Author's credentials or background info
+- Generic terms: 연구, 논문, 프로젝트, 회의, 미팅
+- Locations mentioned in passing
+- Dates or time references
+- Tools mentioned but not central (Python, Excel, etc.)
+
+## Key Question to Ask:
+"If someone searches for this entity, would THIS note be relevant to their search?"
+- If YES → Extract it
+- If NO → Do NOT extract it
+
+## Examples:
+- Note about "How attention mechanism works" → Extract: "Attention Mechanism" (Topic)
+  - Do NOT extract: "Vaswani" (just a citation), "Google" (where paper was published)
+
+- Note about "Meeting notes with Prof. Kim about thesis" → Extract: "Prof. Kim" (Person), "Thesis" (Project if defined)
+  - Do NOT extract: "서울대학교" (just where the meeting happened)
+
+**Quality over Quantity**: Extract 1-3 truly relevant entities rather than 10 loosely connected ones.
 """
 
 # 그래프 변환기 설정

@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, Plugin } from "obsidian";
 import { Network } from "vis-network";
 import { DidymosSettings } from "../settings";
-import { DidymosAPI, GraphData } from "../api/client";
+import { DidymosAPI, GraphData, ClusteredGraphData } from "../api/client";
 
 export const DIDYMOS_GRAPH_VIEW_TYPE = "didymos-graph-view";
 
@@ -23,6 +23,12 @@ export class DidymosGraphView extends ItemView {
   layoutSpacing: "regular" | "compact" = "regular";
   viewMode: "note" | "vault" = "vault";  // 기본값을 vault로 변경
   enableClustering: boolean = true; // Vault 모드에서 클러스터링 활성화
+  currentZoomLevel: "out" | "medium" | "in" = "out"; // Zoom 레벨 추적
+  clusterMethod: "semantic" | "type_based" = "semantic"; // 클러스터링 방식 선택
+  includeClusterLLM: boolean = false; // 클러스터 요약 LLM 사용 여부
+  clusterForceRecompute: boolean = false; // 캐시 무시 여부
+  clusterStatusEl: HTMLElement | null = null;
+  clusterDetailEl: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, settings: DidymosSettings, plugin: Plugin) {
     super(leaf);
@@ -95,6 +101,49 @@ export class DidymosGraphView extends ItemView {
       await this.syncAllNotes(syncBtn);
     });
 
+    // 클러스터링 옵션 (Vault 모드)
+    const clusteringControls = controls.createEl("div", { cls: "didymos-clustering-controls" });
+    clusteringControls.createEl("span", { text: "Clustering" });
+
+    const methodSelect = clusteringControls.createEl("select", { cls: "didymos-graph-select" });
+    [
+      { label: "Semantic (UMAP+HDBSCAN)", value: "semantic" },
+      { label: "Type-based (fallback)", value: "type_based" },
+    ].forEach((opt) => {
+      const option = methodSelect.createEl("option", { text: opt.label, value: opt.value });
+      if (opt.value === this.clusterMethod) option.selected = true;
+    });
+    methodSelect.addEventListener("change", async () => {
+      this.clusterMethod = methodSelect.value as typeof this.clusterMethod;
+      this.clusterForceRecompute = true; // 캐시 무시하고 재계산
+      if (this.viewMode === "vault") {
+        await this.renderVaultGraph();
+      }
+    });
+
+    const llmToggle = clusteringControls.createEl("label", { cls: "didymos-graph-toggle" });
+    const llmCheckbox = llmToggle.createEl("input", { type: "checkbox" });
+    llmCheckbox.checked = this.includeClusterLLM;
+    llmToggle.createSpan({ text: "LLM Summary" });
+    llmCheckbox.addEventListener("change", async () => {
+      this.includeClusterLLM = llmCheckbox.checked;
+      this.clusterForceRecompute = true;
+      if (this.viewMode === "vault") {
+        await this.renderVaultGraph();
+      }
+    });
+
+    const recomputeBtn = clusteringControls.createEl("button", {
+      text: "Recompute",
+      cls: "didymos-sync-btn"
+    });
+    recomputeBtn.addEventListener("click", async () => {
+      this.clusterForceRecompute = true;
+      if (this.viewMode === "vault") {
+        await this.renderVaultGraph();
+      }
+    });
+
     // Auto/Manual Hops Toggle
     const hopControlGroup = controls.createEl("div", { cls: "didymos-hop-control-group" });
 
@@ -159,7 +208,11 @@ export class DidymosGraphView extends ItemView {
       wrap.createSpan({ text: label });
       checkbox.addEventListener("change", async () => {
         onChange(checkbox.checked);
-        if (this.currentNoteId) await this.renderGraph(this.currentNoteId);
+        if (this.viewMode === "note" && this.currentNoteId) {
+          await this.renderGraph(this.currentNoteId);
+        } else if (this.viewMode === "vault") {
+          await this.renderVaultGraph();
+        }
       });
     };
 
@@ -222,6 +275,12 @@ export class DidymosGraphView extends ItemView {
     fontSelect.addEventListener("change", async () => {
       this.fontPreset = fontSelect.value as typeof this.fontPreset;
       if (this.currentNoteId) await this.renderGraph(this.currentNoteId);
+    });
+
+    // Status Bar
+    const statusBar = container.createEl("div", { cls: "didymos-graph-status" });
+    this.clusterStatusEl = statusBar.createSpan({
+      text: "Clustering: semantic (cached)",
     });
 
     // Graph Container
@@ -390,17 +449,97 @@ export class DidymosGraphView extends ItemView {
 
     graphContainer.empty();
 
+    if (this.clusterStatusEl) {
+      this.clusterStatusEl.setText(
+        `Clustering: ${this.clusterMethod}${this.includeClusterLLM ? " + LLM" : ""} (loading...)`
+      );
+    }
+
     try {
       graphContainer.createEl("div", {
         text: "Loading vault graph...",
         cls: "didymos-graph-loading",
       });
 
-      // hops 파라미터 추가
-      const hops = this.autoHops ? 3 : this.currentHops; // vault는 기본 3 hops
+      // 클러스터링 활성화 시 클러스터 API 사용
+      if (this.enableClustering) {
+        const clusteredData: ClusteredGraphData = await this.api.fetchClusteredGraph(
+          this.settings.vaultId,
+          {
+            targetClusters: 10,
+            includeLLM: this.includeClusterLLM,
+            forceRecompute: this.clusterForceRecompute,
+            method: this.clusterMethod
+          }
+        );
+        this.clusterForceRecompute = false;
 
-      // Vault 전체 그래프를 한 번의 API 호출로 가져오기
-      // 백엔드 limit 제한: 최대 500
+        if (this.clusterStatusEl) {
+          this.clusterStatusEl.setText(
+            `Clusters: ${clusteredData.cluster_count} • Nodes: ${clusteredData.total_nodes} • Method: ${clusteredData.computation_method}${this.includeClusterLLM ? " + LLM" : ""}`
+          );
+        }
+
+        console.log(`✅ Clustered graph loaded: ${clusteredData.cluster_count} clusters, ${clusteredData.total_nodes} total nodes`);
+
+        // 클러스터를 vis-network 노드로 변환
+        const clusterNodes = clusteredData.clusters.map(cluster => {
+          const summary = cluster.summary || "No summary yet";
+          const insights = (cluster.key_insights && cluster.key_insights.length > 0)
+            ? cluster.key_insights.join("\n")
+            : "No insights yet";
+          const samples = cluster.sample_entities && cluster.sample_entities.length > 0
+            ? `Samples: ${cluster.sample_entities.slice(0, 5).join(", ")}`
+            : "Samples: -";
+          const recent = typeof cluster.recent_updates === "number"
+            ? `Recent updates (7d): ${cluster.recent_updates}`
+            : "Recent updates (7d): -";
+
+          return {
+            id: cluster.id,
+            label: `${cluster.name}\n(${cluster.node_count} nodes)`,
+            shape: 'box',
+            size: 30 + (cluster.importance_score * 5),
+            color: {
+              background: this.getClusterColor(cluster.contains_types),
+              border: '#666666'
+            },
+            font: { size: 16, color: '#ffffff' },
+            group: 'cluster',
+            title: `${summary}\n${recent}\n${samples}\n\nInsights:\n${insights}`,
+            cluster_data: cluster
+          };
+        });
+
+        const clusterEdges = clusteredData.edges.map(edge => ({
+          from: edge.from,
+          to: edge.to,
+          label: edge.relation_type,
+          arrows: { to: { enabled: true, scaleFactor: 0.4 } },
+          color: { color: '#888888', highlight: '#333333' },
+          width: Math.max(1, edge.weight * 0.5),  // 얇은 선 (기존 * 2 → * 0.5)
+          font: {
+            size: 11,
+            color: '#555555',
+            strokeWidth: 2,
+            strokeColor: '#ffffff',
+            align: 'horizontal',
+            background: 'rgba(255,255,255,0.8)'
+          },
+          smooth: { type: 'curvedCW', roundness: 0.2 }
+        }));
+
+        const filtered: GraphData = {
+          nodes: clusterNodes,
+          edges: clusterEdges
+        };
+
+        this.renderClusteredGraph(graphContainer, filtered);
+        return;
+      }
+
+      // 일반 모드: 기존 로직
+      const hops = this.autoHops ? 3 : this.currentHops;
       const graphResponse = await fetch(
         `${this.settings.apiEndpoint}/graph/user/${this.settings.userToken}?vault_id=${this.settings.vaultId}&limit=500`
       );
@@ -411,6 +550,10 @@ export class DidymosGraphView extends ItemView {
       }
 
       const graphData = await graphResponse.json();
+
+      if (this.clusterStatusEl) {
+        this.clusterStatusEl.setText("Clustering disabled (raw vault graph)");
+      }
 
       if (!graphData.nodes || graphData.nodes.length === 0) {
         graphContainer.empty();
@@ -548,31 +691,16 @@ export class DidymosGraphView extends ItemView {
         ...clusteringOptions,
       });
 
-      // Vault 모드에서 topic별로 자동 클러스터링
-      if (this.enableClustering) {
-        const topics = filtered.nodes.filter(n => n.group === 'topic');
-        topics.forEach((topic) => {
-          // 각 topic과 연결된 노드들을 하나의 클러스터로 묶기
-          this.network?.cluster({
-            joinCondition: (nodeOptions) => {
-              // Topic 자체 또는 topic과 직접 연결된 노드들을 클러스터에 포함
-              if (nodeOptions.id === topic.id) return true;
-              return filtered.edges.some(e =>
-                (e.from === topic.id && e.to === nodeOptions.id) ||
-                (e.to === topic.id && e.from === nodeOptions.id)
-              );
-            },
-            clusterNodeProperties: {
-              label: topic.label || 'Topic',
-              shape: 'dot',
-              size: 40,
-              font: { size: 16, color: '#2E7D32' },
-              color: { background: '#A5D6A7', border: '#4CAF50' },
-              borderWidth: 3,
-            } as any,
-          });
-        });
-      }
+      // Zoom 이벤트 리스너 추가 (동적 클러스터링)
+      this.network.on("zoom", () => {
+        if (!this.network) return;
+
+        const scale = this.network.getScale();
+        this.updateClusteringByZoom(scale, filtered);
+      });
+
+      // 초기 클러스터링 적용 (Zoom Out 상태)
+      this.updateClusteringByZoom(this.network.getScale(), filtered);
 
       this.network.on("click", (params) => {
         if (params.nodes.length > 0) {
@@ -593,6 +721,9 @@ export class DidymosGraphView extends ItemView {
         }
       });
     } catch (error: any) {
+      if (this.clusterStatusEl) {
+        this.clusterStatusEl.setText(`Clustering failed: ${error.message}`);
+      }
       console.error("Vault graph rendering error:", error);
       console.error("Error stack:", error.stack);
       console.error("API endpoint used:", `${this.settings.apiEndpoint}/graph/user/${this.settings.userToken}`);
@@ -792,6 +923,110 @@ export class DidymosGraphView extends ItemView {
     return { nodes: allowedNodes, edges: allowedEdges };
   }
 
+  /**
+   * Zoom 레벨에 따라 동적으로 클러스터링 조정
+   * Scale 임계값:
+   * - < 0.5: Zoom Out → Topic 클러스터만
+   * - 0.5 ~ 1.2: Zoom Medium → Topic + Project 표시
+   * - > 1.2: Zoom In → 모든 노드 표시
+   */
+  private updateClusteringByZoom(scale: number, graphData: GraphData) {
+    if (!this.network || !this.enableClustering) return;
+
+    // Zoom 레벨 결정
+    let newZoomLevel: "out" | "medium" | "in";
+    if (scale < 0.8) {
+      newZoomLevel = "out";
+    } else if (scale < 1.5) {
+      newZoomLevel = "medium";
+    } else {
+      newZoomLevel = "in";
+    }
+
+    // 레벨이 변경되지 않았으면 아무것도 하지 않음
+    if (newZoomLevel === this.currentZoomLevel) return;
+
+    console.log(`Zoom level changed: ${this.currentZoomLevel} → ${newZoomLevel} (scale: ${scale.toFixed(2)})`);
+    this.currentZoomLevel = newZoomLevel;
+
+    // 모든 클러스터 해제
+    const allNodeIds = (this.network as any).body.data.nodes.getIds();
+    const clusterIds = allNodeIds.filter((id: string) =>
+      this.network?.isCluster(id)
+    );
+    clusterIds.forEach((clusterId: string) => {
+      if (this.network?.isCluster(clusterId)) {
+        this.network.openCluster(clusterId);
+      }
+    });
+
+    // Zoom 레벨에 따라 클러스터링 재적용
+    if (newZoomLevel === "out") {
+      // Zoom Out: 모든 Note 노드를 숨기고 Topic/Project/Task만 표시
+      const noteNodes = graphData.nodes.filter(n => n.group === 'note');
+
+      // 모든 Note를 하나의 큰 클러스터로 묶음
+      if (noteNodes.length > 0) {
+        this.network?.cluster({
+          joinCondition: (nodeOptions) => {
+            const node = graphData.nodes.find(n => n.id === nodeOptions.id);
+            return node?.group === 'note';
+          },
+          clusterNodeProperties: {
+            id: 'cluster_all_notes',
+            label: `Notes (${noteNodes.length})`,
+            shape: 'box',
+            size: 30,
+            font: { size: 14, color: '#616161' },
+            color: { background: '#E0E0E0', border: '#9E9E9E' },
+            borderWidth: 2,
+            hidden: true, // 클러스터를 숨김
+          } as any,
+        });
+      }
+
+    } else if (newZoomLevel === "medium") {
+      // Zoom Medium: Topic과 연결된 Note들을 클러스터로 묶음 (Project/Task는 개별 표시)
+      const topics = graphData.nodes.filter(n => n.group === 'topic');
+      topics.forEach((topic) => {
+        // Topic과 연결된 Note만 찾기
+        const connectedNotes = graphData.nodes.filter(node => {
+          if (node.group !== 'note') return false;
+          return graphData.edges.some(e =>
+            (e.from === topic.id && e.to === node.id) ||
+            (e.to === topic.id && e.from === node.id)
+          );
+        });
+
+        // 연결된 Note가 있으면 클러스터 생성
+        if (connectedNotes.length > 0) {
+          this.network?.cluster({
+            joinCondition: (nodeOptions) => {
+              if (nodeOptions.id === topic.id) return true;
+              const node = graphData.nodes.find(n => n.id === nodeOptions.id);
+              if (!node || node.group !== 'note') return false;
+              return graphData.edges.some(e =>
+                (e.from === topic.id && e.to === nodeOptions.id) ||
+                (e.to === topic.id && e.from === nodeOptions.id)
+              );
+            },
+            clusterNodeProperties: {
+              id: `cluster_topic_${topic.id}`,
+              label: `${topic.label}\n(${connectedNotes.length} notes)`,
+              shape: 'dot',
+              size: 40,
+              font: { size: 16, color: '#2E7D32' },
+              color: { background: '#A5D6A7', border: '#4CAF50' },
+              borderWidth: 3,
+            } as any,
+          });
+        }
+      });
+
+    }
+    // newZoomLevel === "in": 클러스터링 없음 (모든 노드 표시)
+  }
+
   private applyTheme(options: any) {
     if (this.themePreset === "midnight") {
       return {
@@ -836,5 +1071,169 @@ export class DidymosGraphView extends ItemView {
     }
 
     return options;
+  }
+
+  private getClusterColor(containsTypes: Record<string, number>): string {
+    /**
+     * 클러스터에 포함된 노드 타입에 따라 색상 결정
+     */
+    const typeColors: Record<string, string> = {
+      topic: '#4CAF50',     // 녹색
+      project: '#2196F3',   // 파란색
+      task: '#FF9800',      // 주황색
+      note: '#9E9E9E'       // 회색
+    };
+
+    // 가장 많은 타입의 색상 선택
+    let maxCount = 0;
+    let dominantType = 'note';
+
+    for (const [type, count] of Object.entries(containsTypes)) {
+      if (count > maxCount) {
+        maxCount = count;
+        dominantType = type;
+      }
+    }
+
+    return typeColors[dominantType] || '#666666';
+  }
+
+  private renderClusteredGraph(container: HTMLElement, graphData: GraphData) {
+    /**
+     * 클러스터 그래프 렌더링
+     */
+    container.empty();
+
+    const baseOptions = {
+      nodes: {
+        font: {
+          size: 16,
+          face: "Inter, sans-serif",
+          color: '#ffffff'
+        },
+        borderWidth: 2,
+        shadow: true,
+      },
+      edges: {
+        font: {
+          size: 12,
+          align: "middle",
+        },
+        arrows: {
+          to: {
+            enabled: true,
+            scaleFactor: 0.5,
+          },
+        },
+        smooth: {
+          enabled: true,
+          type: "cubicBezier",
+        },
+      },
+      physics: {
+        enabled: true,
+        barnesHut: {
+          gravitationalConstant: -5000,
+          springLength: 200,
+          springConstant: 0.01,
+        },
+        stabilization: { iterations: 150 },
+      },
+      interaction: {
+        hover: true,
+        tooltipDelay: 100,
+        navigationButtons: true,
+        keyboard: true,
+      },
+    };
+
+    const themedOptions = this.applyTheme(baseOptions);
+
+    this.network = new Network(container, graphData, themedOptions);
+
+    // 클러스터 클릭 이벤트 - 상세 정보 표시
+    this.network.on("click", (params) => {
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        const node = graphData.nodes.find(n => n.id === nodeId);
+
+        if (node && (node as any).cluster_data) {
+          this.showClusterDetails((node as any).cluster_data);
+        }
+      }
+    });
+
+    console.log(`✅ Clustered graph rendered: ${graphData.nodes.length} clusters, ${graphData.edges.length} edges`);
+  }
+
+  private showClusterDetails(clusterData: any) {
+    /**
+     * 클러스터 상세 정보를 모달로 표시
+     */
+    if (this.clusterDetailEl) {
+      this.clusterDetailEl.remove();
+    }
+
+    const container = this.containerEl.querySelector(".didymos-graph-container") as HTMLElement;
+    const detail = container.createEl("div", { cls: "didymos-cluster-detail" });
+    this.clusterDetailEl = detail;
+
+    const header = detail.createEl("div", { cls: "didymos-cluster-detail__header" });
+    header.createEl("h3", { text: `📦 ${clusterData.name}` });
+    const closeBtn = header.createEl("button", { text: "Close" });
+    closeBtn.addEventListener("click", () => {
+      detail.remove();
+      this.clusterDetailEl = null;
+    });
+
+    const meta = detail.createEl("div", { cls: "didymos-cluster-detail__meta" });
+    meta.createSpan({ text: `Nodes: ${clusterData.node_count}` });
+    meta.createSpan({ text: `Importance: ${(clusterData.importance_score || 0).toFixed(1)}/10` });
+    meta.createSpan({ text: `Recent (7d): ${clusterData.recent_updates ?? 0}` });
+
+    const summary = detail.createEl("div", { cls: "didymos-cluster-detail__summary" });
+    summary.createEl("h4", { text: "요약" });
+    summary.createEl("p", { text: clusterData.summary || "N/A" });
+
+    const insightsWrap = detail.createEl("div", { cls: "didymos-cluster-detail__insights" });
+    insightsWrap.createEl("h4", { text: "주요 인사이트" });
+    const insightList = insightsWrap.createEl("ul");
+    (clusterData.key_insights || ["인사이트 없음"]).forEach((ins: string) => {
+      insightList.createEl("li", { text: ins });
+    });
+
+    const samplesWrap = detail.createEl("div", { cls: "didymos-cluster-detail__samples" });
+    samplesWrap.createEl("h4", { text: "샘플 엔티티" });
+    const sampleEntities = clusterData.sample_entities || [];
+    samplesWrap.createEl("p", { text: sampleEntities.length ? sampleEntities.slice(0, 8).join(", ") : "-" });
+
+    const notesWrap = detail.createEl("div", { cls: "didymos-cluster-detail__samples" });
+    notesWrap.createEl("h4", { text: "샘플 노트" });
+    const sampleNotes = clusterData.sample_notes || [];
+    const sampleNoteIds = clusterData.note_ids || [];
+    if (sampleNotes.length) {
+      const list = notesWrap.createEl("ul");
+      sampleNotes.slice(0, 5).forEach((title: string, idx: number) => {
+        const li = list.createEl("li");
+        const btn = li.createEl("button", { text: title });
+        btn.addEventListener("click", () => {
+          const noteId = sampleNoteIds[idx] || title;
+          this.app.workspace.openLinkText(noteId, "", false);
+        });
+      });
+    } else {
+      notesWrap.createEl("p", { text: "-" });
+    }
+
+    const nextActions = detail.createEl("div", { cls: "didymos-cluster-detail__actions" });
+    nextActions.createEl("h4", { text: "다음 액션" });
+    const actions = (clusterData.key_insights || []).filter((x: string) => x.toLowerCase().includes("next action"));
+    if (actions.length === 0) actions.push("이 클러스터에서 연결이 약한 노트를 검토하세요.");
+    const actionList = nextActions.createEl("ul");
+    actions.forEach((action: string) => actionList.createEl("li", { text: action }));
+
+    // Drilldown 힌트
+    const hint = detail.createEl("div", { cls: "didymos-cluster-detail__hint" });
+    hint.createSpan({ text: "Tip: Zoom In to expand clusters, or switch to Note mode for per-note graph." });
   }
 }
