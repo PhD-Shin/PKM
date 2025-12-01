@@ -52,53 +52,42 @@ llm = ChatOpenAI(
     api_key=settings.openai_api_key
 )
 
-# 엔티티 추출 추가 지침 (additional_instructions로 전달)
-ENTITY_EXTRACTION_INSTRUCTIONS = """
-You are extracting CORE CONCEPTS from personal knowledge management notes.
+# 커스텀 프롬프트 템플릿 (additional_instructions 대신 prompt 파라미터 사용)
+from langchain_core.prompts import ChatPromptTemplate
+
+CUSTOM_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """You are extracting CORE CONCEPTS from personal knowledge management notes into a knowledge graph.
 
 **CRITICAL: Focus on what the note is ABOUT, not what it merely MENTIONS.**
 
-## What to Extract (ONLY these):
-1. **Topic**: The MAIN SUBJECT of this note. What is this note discussing?
-   - Extract the primary theme or concept being explored
-   - NOT background context or passing references
-   - Example: A note about "transformer architecture" should extract "Transformer Architecture" as Topic
-   - NOT "서울대학교" just because the author works there
-
-2. **Project**: Only if this note is ABOUT a specific project
-   - The note must be dedicated to describing/planning the project
-   - NOT projects merely mentioned in passing
-
-3. **Task**: Only explicit action items with clear deliverables
-   - Must have specific outcomes
-   - NOT vague intentions
-
-4. **Person**: Only if this person is CENTRAL to the note's content
-   - The note discusses their work, ideas, or collaboration
-   - NOT just mentioned in credentials or background
+## Entity Types to Extract:
+- **Topic**: The MAIN SUBJECT of this note (the primary theme being explored)
+- **Project**: Only if the note is ABOUT a specific project
+- **Task**: Explicit action items with clear deliverables
+- **Person**: Only if this person is CENTRAL to the note's content
 
 ## What NOT to Extract:
 - Institutional affiliations (서울대학교, MIT, Google) unless the note is ABOUT that institution
 - Author's credentials or background info
 - Generic terms: 연구, 논문, 프로젝트, 회의, 미팅
-- Locations mentioned in passing
-- Dates or time references
-- Tools mentioned but not central (Python, Excel, etc.)
+- Locations, dates, or tools mentioned in passing
 
-## Key Question to Ask:
-"If someone searches for this entity, would THIS note be relevant to their search?"
+## Key Question: "If someone searches for this entity, would THIS note be relevant?"
 - If YES → Extract it
 - If NO → Do NOT extract it
 
-## Examples:
-- Note about "How attention mechanism works" → Extract: "Attention Mechanism" (Topic)
-  - Do NOT extract: "Vaswani" (just a citation), "Google" (where paper was published)
-
-- Note about "Meeting notes with Prof. Kim about thesis" → Extract: "Prof. Kim" (Person), "Thesis" (Project if defined)
-  - Do NOT extract: "서울대학교" (just where the meeting happened)
-
 **Quality over Quantity**: Extract 1-3 truly relevant entities rather than 10 loosely connected ones.
-"""
+
+## Allowed Relationships:
+- MENTIONS: Note mentions an entity
+- RELATED_TO: Entity is related to another entity
+- PART_OF: Entity is part of another entity
+- ASSIGNED_TO: Task is assigned to a person
+- HAS_TASK: Project has a task
+
+Extract entities and relationships from the following text. Return them in JSON format."""),
+    ("human", "{input}")
+])
 
 # 그래프 변환기 설정
 llm_transformer = LLMGraphTransformer(
@@ -107,7 +96,7 @@ llm_transformer = LLMGraphTransformer(
     allowed_relationships=["MENTIONS", "RELATED_TO", "PART_OF", "ASSIGNED_TO", "HAS_TASK"],
     strict_mode=False,
     node_properties=["name", "description"],
-    additional_instructions=ENTITY_EXTRACTION_INSTRUCTIONS
+    prompt=CUSTOM_EXTRACTION_PROMPT
 )
 
 

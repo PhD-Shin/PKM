@@ -1,13 +1,52 @@
-# Didymos PKM - Obsidian Plugin
+# Didymos - Obsidian Plugin
 
-AI-powered Personal Knowledge Management plugin for Obsidian with Neo4j graph backend.
+> **"Smart Connections를 넘어선 구조화된 2nd Brain"**
+> 의미론적 계층 지식 그래프 + Claude AI 인사이트
 
-## Features
+**Status**: MVP Phase 11 - Day 11 완료 (의사결정 인사이트 강화), Day 12-13 테스트 진행 중
 
-- 📝 **Auto Sync**: Automatically sync notes to Neo4j backend when modified
-- 🤖 **AI Entity Extraction**: Extract entities (Topics, Projects, Tasks, People) from note content
-- 🔗 **Graph Relationships**: Automatic relationship detection between entities
-- 🌐 **Neo4j Backend**: Store your knowledge in a graph database
+---
+
+## 개요
+
+Didymos는 Obsidian을 위한 AI 기반 지식 그래프 플러그인입니다. Smart Connections와 달리, 단순히 유사 노트를 찾는 것이 아니라 **의미론적 계층 구조**를 제공하고, **Claude AI가 각 클러스터를 요약**하여 의사결정을 지원합니다.
+
+### 핵심 차별점
+
+| 기능 | Smart Connections | Didymos |
+|------|-------------------|---------|
+| **검색** | 유사 노트 검색 | ✅ + 구조화된 맥락 |
+| **구조** | 평면적 | ✅ 계층적 클러스터 |
+| **분석** | 없음 | ✅ 의사결정 인사이트 |
+| **LLM** | 임베딩만 | ✅ Claude 클러스터 요약 |
+
+### 실제 사용 예시
+
+**Before (Smart Connections)**:
+- "Raman scattering"로 검색 → 유사 노트 10개 리스트
+- 전체 구조 파악 어려움
+
+**After (Didymos)**:
+- 471개 노트 → 8개 의미론적 클러스터로 자동 구조화
+- "Research & Papers" 클러스터 클릭 → Claude가 요약: "이 클러스터는 Raman scattering 관련 연구 논문들로 구성되어 있으며, 최근 7일간 15개 노트가 업데이트되었습니다. HeII line 분석이 핵심이며, RR Tel 관측 데이터 추가 분석이 필요합니다."
+
+---
+
+## 주요 기능
+
+### Phase 0-10 (완료)
+- ✅ **자동 동기화**: 노트 수정 시 Neo4j 백엔드로 자동 동기화
+- ✅ **AI 온톨로지 추출**: Topic, Project, Task 자동 추출
+- ✅ **그래프 시각화**: vis-network 기반 인터랙티브 그래프
+- ✅ **패턴 분석**: PageRank, Community Detection
+- ✅ **주간 리뷰**: 새 토픽, 잊힌 프로젝트, 미완료 태스크
+
+### Phase 11 (Week 1 완료, Week 2 진행 중)
+- ✅ **의미론적 클러스터링**: 471개 노트 → 8-12개 클러스터 (UMAP + HDBSCAN)
+- ✅ **GPT-5 Mini 클러스터 요약**: 각 클러스터의 핵심 인사이트 + 다음 행동 제안
+- ✅ **계층적 탐색 UI**: 클러스터 상세 패널 슬라이드 애니메이션
+- ✅ **의사결정 인사이트**: 최근 업데이트 통계, 실행 가능한 인사이트, Next Actions
+- ✅ **성능 최적화**: 백그라운드 캐시 워밍업, 12시간 TTL, 병렬 LLM 처리
 
 ## Installation
 

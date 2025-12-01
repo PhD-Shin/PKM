@@ -1497,3 +1497,227 @@
   font-size: 0.9em;
 }
 
+/* Cluster Detail Panel with Animations */
+.didymos-cluster-detail {
+  position: absolute;
+  top: 50px;
+  right: 20px;
+  width: 400px;
+  max-height: 80%;
+  background-color: var(--background-primary);
+  border: 2px solid var(--interactive-accent);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  overflow-y: auto;
+  animation: slideInRight 0.3s ease-out;
+}
+
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(50px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.didymos-cluster-detail__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  border-bottom: 2px solid var(--background-modifier-border);
+  background-color: var(--background-secondary);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.didymos-cluster-detail__header h3 {
+  margin: 0;
+  font-size: 1.2em;
+  color: var(--text-normal);
+}
+
+.didymos-cluster-detail__header button {
+  padding: 4px 12px;
+  background-color: var(--background-modifier-error);
+  color: var(--text-on-accent);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: opacity 0.2s;
+}
+
+.didymos-cluster-detail__header button:hover {
+  opacity: 0.8;
+}
+
+.didymos-cluster-detail__meta {
+  display: flex;
+  gap: 12px;
+  padding: 12px 16px;
+  background-color: var(--background-secondary);
+  border-bottom: 1px solid var(--background-modifier-border);
+  flex-wrap: wrap;
+}
+
+.didymos-cluster-detail__meta span {
+  padding: 4px 8px;
+  background-color: var(--background-primary);
+  border-radius: 4px;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.didymos-cluster-detail__summary,
+.didymos-cluster-detail__insights,
+.didymos-cluster-detail__samples,
+.didymos-cluster-detail__actions,
+.didymos-cluster-detail__hint {
+  padding: 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.didymos-cluster-detail__summary h4,
+.didymos-cluster-detail__insights h4,
+.didymos-cluster-detail__samples h4,
+.didymos-cluster-detail__actions h4 {
+  margin: 0 0 12px 0;
+  font-size: 1em;
+  color: var(--text-accent);
+  font-weight: 600;
+}
+
+.didymos-cluster-detail__summary p {
+  margin: 0;
+  line-height: 1.6;
+  color: var(--text-normal);
+}
+
+.didymos-cluster-detail__insights ul,
+.didymos-cluster-detail__actions ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.didymos-cluster-detail__insights li,
+.didymos-cluster-detail__actions li {
+  padding: 8px;
+  margin-bottom: 6px;
+  background-color: var(--background-secondary);
+  border-left: 3px solid var(--interactive-accent);
+  border-radius: 4px;
+  font-size: 0.9em;
+  line-height: 1.5;
+  transition: background-color 0.2s, transform 0.2s;
+}
+
+.didymos-cluster-detail__insights li:hover,
+.didymos-cluster-detail__actions li:hover {
+  background-color: var(--background-modifier-hover);
+  transform: translateX(4px);
+}
+
+.didymos-cluster-detail__samples p {
+  margin: 0;
+  font-size: 0.9em;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.didymos-cluster-detail__samples ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.didymos-cluster-detail__samples li {
+  margin-bottom: 6px;
+}
+
+.didymos-cluster-detail__samples button {
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  background-color: var(--background-secondary);
+  color: var(--link-color);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s;
+}
+
+.didymos-cluster-detail__samples button:hover {
+  background-color: var(--background-modifier-hover);
+  border-color: var(--interactive-accent);
+  transform: translateX(2px);
+}
+
+.didymos-cluster-detail__hint {
+  background-color: var(--background-secondary);
+  border-bottom: none;
+  border-radius: 0 0 12px 12px;
+}
+
+.didymos-cluster-detail__hint span {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+/* Cluster Status Bar */
+.didymos-graph-status {
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background-color: var(--background-secondary);
+  border-radius: 6px;
+  border-left: 4px solid var(--interactive-accent);
+  font-size: 0.85em;
+  color: var(--text-muted);
+  transition: all 0.3s;
+}
+
+.didymos-graph-status:hover {
+  background-color: var(--background-modifier-hover);
+  border-left-width: 6px;
+}
+
+/* Clustering Controls Enhancement */
+.didymos-clustering-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px;
+  background-color: var(--background-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+}
+
+.didymos-clustering-controls span {
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+

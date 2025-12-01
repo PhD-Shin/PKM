@@ -30,7 +30,10 @@
       "Bash(unzip:*)",
       "Bash(railway status:*)",
       "Bash(echo:*)",
-      "Bash(railway logs:*)"
+      "Bash(railway logs:*)",
+      "Bash(npm:*)",
+      "Bash(railway up:*)",
+      "Bash(pip show:*)"
     ],
     "deny": [],
     "ask": []

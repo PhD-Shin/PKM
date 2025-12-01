@@ -1,6 +1,9 @@
 # 🎨 Didymos - Design Document
 
 > UI/UX 디자인 명세 및 사용자 경험 가이드
+> **제품 포지셔닝**: "Smart Connections를 넘어선 구조화된 2nd Brain"
+
+**Last Updated**: 2025-12-02
 
 ---
 
@@ -8,14 +11,19 @@
 
 ### 1.1 핵심 원칙
 1. **비침투적 (Non-intrusive)**: Obsidian 워크플로우를 방해하지 않음
-2. **컨텍스트 우선**: 항상 현재 노트와 관련된 정보만 표시
+2. **구조화된 인사이트**: 평면적 검색이 아닌 계층적 지식 그래프
 3. **즉각적 피드백**: 노트 저장 시 실시간으로 컨텍스트 업데이트
 4. **미니멀 디자인**: 정보 과부하 방지, 핵심만 표시
+5. **의사결정 지원**: LLM 기반 클러스터 요약 및 인사이트 제공
 
 ### 1.2 디자인 언어
 - **컬러**: Obsidian 테마 자동 적응 (라이트/다크 모드)
 - **타이포그래피**: Obsidian 기본 폰트 사용
 - **아이콘**: Lucide Icons (Obsidian 표준)
+
+### 1.3 차별화 포인트 (vs Smart Connections)
+- Smart Connections: 유사 노트 검색 (평면적)
+- Didymos: 의미론적 계층 그래프 + LLM 요약 + 의사결정 인사이트
 
 ---
 
@@ -29,10 +37,14 @@
 │                 │                  │                │
 │   📁 Folder     │   # Note Title   │ 🧭 Context     │
 │   📄 Note 1     │                  │ 📊 Graph       │
-│   📄 Note 2     │   Content...     │ ✅ Tasks       │
-│                 │                  │ 📅 Review      │
+│   📄 Note 2     │   Content...     │ 🗺️ Clusters   │
+│                 │                  │ ✅ Tasks       │
+│                 │                  │ 💡 Insights    │
 └─────────────────┴──────────────────┴────────────────┘
 ```
+
+**Phase 11 추가**: 🗺️ Clusters 패널 - 의미론적 클러스터 탐색
+**Phase 11 추가**: 💡 Insights 패널 - LLM 기반 인사이트
 
 ---
 
