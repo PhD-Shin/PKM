@@ -407,9 +407,41 @@ def get_user_graph(user_id: str, vault_id: str = None, limit: int = 100):
         entity_nodes = result.get("entityNodes", [])
         edges = result.get("edges", [])
 
+        # Get entity-to-entity relationships
+        cypher_entity_rels = """
+        MATCH (n:Note)
+        WHERE n.note_id IN $note_ids
+        MATCH (n)-[:MENTIONS]->(e1)
+        MATCH (e1)-[r]->(e2)
+        WHERE type(r) IN ['RELATED_TO', 'PART_OF', 'HAS_TASK', 'ASSIGNED_TO', 'BROADER', 'NARROWER']
+        RETURN DISTINCT
+            e1.id AS from_id,
+            labels(e1)[0] AS from_type,
+            e2.id AS to_id,
+            labels(e2)[0] AS to_type,
+            type(r) AS rel_type
+        """
+
+        entity_rel_results = client.query(cypher_entity_rels, {"note_ids": note_ids}) or []
+
+        for record in entity_rel_results:
+            from_id = record.get("from_id")
+            from_type = record.get("from_type", "").lower()
+            to_id = record.get("to_id")
+            to_type = record.get("to_type", "").lower()
+            rel_type = record.get("rel_type")
+
+            if from_id and to_id and rel_type:
+                edges.append({
+                    "from": from_id,
+                    "to": to_id,
+                    "type": rel_type,
+                    "label": rel_type.lower().replace("_", " ")
+                })
+
         all_nodes = note_nodes + entity_nodes
 
-        logger.info(f"Graph query result: {len(note_nodes)} note nodes, {len(entity_nodes)} entity nodes, {len(edges)} edges")
+        logger.info(f"Graph query result: {len(note_nodes)} note nodes, {len(entity_nodes)} entity nodes, {len(edges)} edges (including {len(entity_rel_results)} entity relationships)")
         if len(all_nodes) == 0:
             logger.warning(f"Graph query returned empty nodes list. Result keys: {result.keys()}")
 
