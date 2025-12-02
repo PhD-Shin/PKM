@@ -229,58 +229,70 @@ export class DidymosGraphView extends ItemView {
       let succeeded = 0;
       let failed = 0;
 
-      // 배치 처리 (10개씩)
-      const batchSize = 10;
-      for (let i = 0; i < markdownFiles.length; i += batchSize) {
-        const batch = markdownFiles.slice(i, i + batchSize);
+      // 순차 처리 (1개씩, Railway 502 타임아웃 방지)
+      // 각 노트의 LLM 엔티티 추출 + 임베딩 생성에 시간이 걸림
+      const noteDelayMs = 500; // 각 노트 처리 후 0.5초 대기
 
-        await Promise.all(
-          batch.map(async (file) => {
-            try {
-              const content = await this.app.vault.read(file);
-              const noteData = {
-                note_id: file.path,
-                title: file.basename,
-                path: file.path,
-                content: content,
-                tags: [],
-                created_at: new Date(file.stat.ctime).toISOString(),
-                updated_at: new Date(file.stat.mtime).toISOString(),
-              };
+      for (const file of markdownFiles) {
+        try {
+          const content = await this.app.vault.read(file);
+          const noteData = {
+            note_id: file.path,
+            title: file.basename,
+            path: file.path,
+            content: content,
+            tags: [],
+            created_at: new Date(file.stat.ctime).toISOString(),
+            updated_at: new Date(file.stat.mtime).toISOString(),
+          };
 
-              // 노트 저장 API 호출
-              const response = await fetch(
-                `${this.settings.apiEndpoint}/notes/sync`,
-                {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    user_token: this.settings.userToken,
-                    vault_id: this.settings.vaultId,
-                    note: noteData,
-                    privacy_mode: "full", // 전체 내용 전송
-                  }),
-                }
-              );
+          // 노트 저장 API 호출 (타임아웃 60초)
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 60000);
 
-              if (response.ok) {
-                succeeded++;
-              } else {
-                failed++;
-                console.error(`Failed to sync ${file.path}: ${response.status}`);
+          try {
+            const response = await fetch(
+              `${this.settings.apiEndpoint}/notes/sync`,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  user_token: this.settings.userToken,
+                  vault_id: this.settings.vaultId,
+                  note: noteData,
+                  privacy_mode: "full",
+                }),
+                signal: controller.signal,
               }
-            } catch (error) {
+            );
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+              succeeded++;
+            } else {
               failed++;
-              console.error(`Error syncing ${file.path}:`, error);
-            } finally {
-              processed++;
-              // 10개 단위로만 업데이트
-              if (processed % 10 === 0) {
-                button.textContent = `⏳ Syncing... ${processed}/${totalFiles}`;
-              }
+              console.error(`Failed to sync ${file.path}: ${response.status}`);
             }
-          })
-        );
+          } catch (fetchError: any) {
+            clearTimeout(timeoutId);
+            if (fetchError.name === 'AbortError') {
+              console.error(`Timeout syncing ${file.path}`);
+            }
+            throw fetchError;
+          }
+        } catch (error) {
+          failed++;
+          console.error(`Error syncing ${file.path}:`, error);
+        } finally {
+          processed++;
+          // 10개 단위로만 UI 업데이트
+          if (processed % 10 === 0 || processed === totalFiles) {
+            button.textContent = `⏳ Syncing... ${processed}/${totalFiles} (${succeeded} ok, ${failed} fail)`;
+          }
+        }
+
+        // 다음 노트 처리 전 짧은 대기
+        await new Promise(resolve => setTimeout(resolve, noteDelayMs));
       }
 
       // 마지막 sync 시간 업데이트

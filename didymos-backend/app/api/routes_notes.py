@@ -1,7 +1,7 @@
 """
 Notes API 라우터
 """
-from fastapi import APIRouter, HTTPException, status, Query
+from fastapi import APIRouter, HTTPException, status, Query, BackgroundTasks
 from app.schemas.note import NoteSyncRequest, NoteSyncResponse
 from app.schemas.context import NoteContextResponse
 from app.db.neo4j import get_neo4j_client
@@ -15,6 +15,7 @@ from app.utils.auth import get_user_id_from_token
 from app.config import settings
 from datetime import datetime
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +27,80 @@ context_cache = TTLCache(ttl_seconds=300)  # 5분으로 연장
 graph_cache = TTLCache(ttl_seconds=300)  # 5분으로 연장
 
 
+async def process_ai_in_background(
+    note_id: str,
+    content: str,
+    tags: list,
+    path: str,
+    title: str,
+    created_at: str,
+    updated_at: str
+):
+    """
+    백그라운드에서 AI 처리 (엔티티 추출 + 임베딩 생성)
+    API 응답을 빠르게 반환하고 AI 작업은 비동기로 처리
+    """
+    try:
+        logger.info(f"🔄 Background AI processing started for: {note_id[:50]}...")
+
+        # 1. 엔티티 추출
+        if USE_GRAPHITI:
+            from app.services.graphiti_service import async_process_note
+            note_updated_at = datetime.now()
+            if updated_at:
+                try:
+                    updated_str = updated_at.replace('Z', '+00:00')
+                    note_updated_at = datetime.fromisoformat(updated_str)
+                except (ValueError, AttributeError):
+                    pass
+
+            graphiti_result = await async_process_note(
+                note_id=note_id,
+                content=content,
+                updated_at=note_updated_at,
+                metadata={
+                    "tags": tags,
+                    "path": path,
+                    "title": title,
+                    "created_at": created_at
+                }
+            )
+            extracted_nodes = graphiti_result.get("nodes_extracted", 0)
+            logger.info(f"✅ Graphiti extracted {extracted_nodes} entities from note")
+        else:
+            extracted_nodes = process_note_to_graph(
+                note_id=note_id,
+                content=content,
+                metadata={"tags": tags}
+            )
+            logger.info(f"✅ Extracted {extracted_nodes} entities from note")
+
+        # 2. 임베딩 생성 및 저장
+        from app.services.vector_service import store_note_embedding
+        embedding_created = store_note_embedding(
+            note_id=note_id,
+            content=content,
+            metadata={"tags": tags}
+        )
+
+        if embedding_created:
+            logger.info(f"✅ Embedding created for note: {note_id[:50]}")
+
+        # 캐시 무효화
+        context_cache.clear(note_id)
+        graph_cache.clear_prefix(f"{note_id}:")
+
+    except Exception as e:
+        logger.error(f"❌ Background AI processing failed for {note_id[:50]}: {e}", exc_info=True)
+
+
 @router.post("/sync", response_model=NoteSyncResponse)
-async def sync_note(payload: NoteSyncRequest):
+async def sync_note(payload: NoteSyncRequest, background_tasks: BackgroundTasks):
     """
     노트 동기화 API
 
     User, Vault, Note 노드를 Neo4j에 생성/업데이트합니다.
+    AI 처리(엔티티 추출 + 임베딩)는 백그라운드에서 비동기로 실행됩니다.
     """
     try:
         client = get_neo4j_client()
@@ -50,81 +119,37 @@ async def sync_note(payload: NoteSyncRequest):
                 detail="Failed to save note",
             )
 
-        # AI 그래프 추출 실행 (content가 있는 경우에만)
-        extracted_nodes = 0
-        embedding_created = False
+        # AI 처리를 백그라운드 태스크로 실행 (content가 있는 경우에만)
         content_for_ai = payload.note.content or ""
         if payload.privacy_mode == "summary":
             content_for_ai = summarize_content(content_for_ai)
         elif payload.privacy_mode == "metadata":
             content_for_ai = ""
 
+        ai_scheduled = False
         if content_for_ai:
-            try:
-                # 1. 엔티티 추출 (Graphiti 또는 기존 방식)
-                logger.info(f"Starting entity extraction for note: {payload.note.note_id[:50]}...")
+            # 백그라운드에서 AI 처리 실행 (API는 즉시 응답)
+            background_tasks.add_task(
+                process_ai_in_background,
+                note_id=payload.note.note_id,
+                content=content_for_ai,
+                tags=payload.note.tags or [],
+                path=payload.note.path or "",
+                title=payload.note.title or "",
+                created_at=payload.note.created_at or "",
+                updated_at=payload.note.updated_at or ""
+            )
+            ai_scheduled = True
+            logger.info(f"📋 AI processing scheduled for: {payload.note.note_id[:50]}...")
 
-                if USE_GRAPHITI:
-                    # Graphiti: 시간 인식 지식 그래프
-                    from app.services.graphiti_service import async_process_note
-                    # 실제 노트 수정 시간 파싱 (temporal KG에서 중요)
-                    note_updated_at = datetime.now()
-                    if payload.note.updated_at:
-                        try:
-                            # ISO format 파싱 (Z suffix 처리)
-                            updated_str = payload.note.updated_at.replace('Z', '+00:00')
-                            note_updated_at = datetime.fromisoformat(updated_str)
-                        except (ValueError, AttributeError):
-                            pass  # 파싱 실패시 현재 시간 사용
-
-                    graphiti_result = await async_process_note(
-                        note_id=payload.note.note_id,
-                        content=content_for_ai,
-                        updated_at=note_updated_at,
-                        metadata={
-                            "tags": payload.note.tags,
-                            "path": payload.note.path,
-                            "title": payload.note.title,
-                            "created_at": payload.note.created_at
-                        }
-                    )
-                    extracted_nodes = graphiti_result.get("nodes_extracted", 0)
-                    logger.info(f"✅ Graphiti extracted {extracted_nodes} entities from note")
-                else:
-                    # 기존 LLMGraphTransformer 방식
-                    extracted_nodes = process_note_to_graph(
-                        note_id=payload.note.note_id,
-                        content=content_for_ai,
-                        metadata={"tags": payload.note.tags}
-                    )
-                    logger.info(f"✅ Extracted {extracted_nodes} entities from note")
-
-                # 2. 임베딩 생성 및 저장
-                from app.services.vector_service import store_note_embedding
-                embedding_created = store_note_embedding(
-                    note_id=payload.note.note_id,
-                    content=content_for_ai,
-                    metadata={"tags": payload.note.tags}
-                )
-
-            except Exception as e:
-                logger.error(f"❌ AI processing failed for note: {e}", exc_info=True)
-                # 추출 실패해도 노트 저장은 성공으로 처리
-
-        # 캐시 무효화
-        context_cache.clear(payload.note.note_id)
-        graph_cache.clear_prefix(f"{payload.note.note_id}:")
-
-        message_parts = [f"Note synced successfully"]
-        if extracted_nodes > 0:
-            message_parts.append(f"Extracted {extracted_nodes} entities")
-        if embedding_created:
-            message_parts.append("Embedding created")
+        message = "Note synced successfully"
+        if ai_scheduled:
+            message += ". AI processing scheduled in background."
 
         return NoteSyncResponse(
             status="success",
             note_id=payload.note.note_id,
-            message=". ".join(message_parts) + ".",
+            message=message,
         )
     except HTTPException:
         raise

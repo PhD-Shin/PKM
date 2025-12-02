@@ -36,7 +36,8 @@
       "Bash(pip show:*)",
       "Bash(/usr/local/Cellar/python@3.11/3.11.14_1/bin/python3.11 -m pip install:*)",
       "Bash(/usr/local/Cellar/python@3.11/3.11.14_1/bin/python3.11:*)",
-      "Bash(railway variables:*)"
+      "Bash(railway variables:*)",
+      "Bash(git checkout:*)"
     ],
     "deny": [],
     "ask": []
