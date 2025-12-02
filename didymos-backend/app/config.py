@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str
 
+    # Graphiti Temporal KG
+    # Graphiti is now the default for temporal knowledge graph
+    # Set to False only for legacy LLMGraphTransformer fallback
+    use_graphiti: bool = True
+
     # CORS
     cors_origins: str = '["*"]'
 

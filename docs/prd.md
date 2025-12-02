@@ -137,38 +137,52 @@ Didymos는 Obsidian 사용자에게 단순한 유사도 검색을 넘어 **의�
 
 ### 3.1 핵심 기능 (Must Have)
 
-#### ✅ 자동 온톨로지 구축 (Graph-based Entity Resolution)
+#### ✅ Temporal Knowledge Graph (Graphiti 기반)
 
-**핵심 원리**: 단순 키워드 빈도가 아닌 **의미론적 관계**를 기반으로 대표 엔티티 추출
+**핵심 원리**: Zep AI의 [Graphiti](https://github.com/getzep/graphiti) 프레임워크를 활용한 **시간 인식 지식 그래프**
 
 ```python
-# 2단계 엔티티 추출 파이프라인
-# Stage 1: LLM이 엔티티 후보 + 관계 동시 추출
-candidates = {
-    "entities": ["서울대학교", "Transformer", "Attention Mechanism"],
-    "relations": [
-        ("Transformer", "PART_OF", "Attention Mechanism"),
-        # "서울대학교"는 관계 없음 → 단순 언급
-    ]
+# Graphiti Bi-Temporal Model
+# 모든 엣지에 4개의 시간 필드 추적
+edge_properties = {
+    "valid_at": "2024-01-15",      # 관계가 실제로 시작된 시점
+    "invalid_at": None,            # 관계가 종료된 시점 (None = 현재 유효)
+    "created_at": "2024-12-02",    # 시스템에 기록된 시점
+    "expired_at": None,            # 시스템에서 만료된 시점
 }
 
-# Stage 2: 관계가 있는 엔티티만 저장 (Graph-based Filtering)
-filtered_entities = ["Transformer", "Attention Mechanism"]
-# "서울대학교"는 관계가 없으므로 제외 → 클러스터 품질 향상
+# Episode 기반 처리
+# 노트 수정 → Episode 생성 → 자동 엔티티 추출 + 시간 정보 기록
+await graphiti.add_episode(
+    name=f"note_update_{note_id}",
+    episode_body=note_content,
+    source_description="Obsidian note",
+    reference_time=note.updated_at,  # 노트 수정 시간
+)
 ```
 
-**왜 이 방식인가?**
-- 문제: "서울대학교"가 1494개 노트에 언급 → 의미 없는 클러스터 형성
-- 해결: 관계(RELATED_TO, PART_OF)가 있는 엔티티만이 진정한 "대표 개념"
-- 영감: Palantir Ontology의 관계 중심 지식 모델링
+**왜 Graphiti인가?**
+- **시간 지식 그래프**: 지식의 변화를 추적 ("작년에는 A였지만 지금은 B")
+- **자동 엔티티 해결**: 중복 엔티티 자동 병합 + 요약 생성
+- **하이브리드 검색**: 시맨틱 + BM25 + 그래프 순회 (300ms P95 지연)
+- **DMR 벤치마크 94.8%**: MemGPT(93.4%) 대비 우수한 성능
+- **영감**: [Zep Temporal KG Paper (arXiv 2501.13956)](https://arxiv.org/abs/2501.13956)
 
 ```
-# Neo4j 저장 시 필터링 적용
-Stage 1: LLM 추출 → candidates (entities + relations)
-Stage 2: relation이 있는 entity만 → Neo4j MERGE
-(:Note)-[:MENTIONS]->(:Topic)  # 관계가 있는 엔티티만
-(:Note)-[:PART_OF]->(:Project)
-(:Note)-[:CONTAINS]->(:Task)
+# Graphiti 데이터 흐름
+Obsidian 노트 수정
+  ↓
+Episode 생성 (reference_time = 노트 수정 시간)
+  ↓
+Graphiti 자동 처리:
+├── Entity 추출 + 요약 생성
+├── Relation 추출 (RELATED_TO, PART_OF)
+├── 기존 Entity와 병합/업데이트
+└── Bi-temporal 시간 정보 기록
+  ↓
+Neo4j 저장 (valid_at, invalid_at, created_at, expired_at)
+  ↓
+시간 기반 쿼리 가능 ("2024년 1월에 내가 관심 있었던 주제는?")
 ```
 
 #### ✅ 의미론적 클러스터링
@@ -251,27 +265,69 @@ Control Panel:
 └────────┘   └──────────┘
 ```
 
-### 4.2 데이터 모델 (Neo4j)
+### 4.2 데이터 모델 (Neo4j + Graphiti Temporal)
 
 ```cypher
-// 노드
+// 노드 (Graphiti EntityNode 확장)
 (:User {id, created_at})
 (:Vault {id, name})
 (:Note {note_id, title, path, content_hash, updated_at})
-(:Topic {id, name, importance_score})
-(:Project {id, name, status})
-(:Task {id, title, status, priority, due_date})
+
+// Graphiti Entity Nodes (자동 요약 포함)
+(:Topic {
+  id, name,
+  summary,           // Graphiti 자동 생성 요약
+  importance_score,
+  created_at         // 최초 발견 시점
+})
+(:Project {id, name, status, summary, created_at})
+(:Task {id, title, status, priority, due_date, summary, created_at})
+(:Person {id, name, summary, created_at})
 (:Cluster {id, name, level, summary, key_insights[]})
 
-// 관계
+// Graphiti Bi-Temporal 엣지 (모든 관계에 적용)
+// valid_at: 관계가 실제로 시작된 시점 (사용자 관점)
+// invalid_at: 관계가 종료된 시점 (NULL = 현재 유효)
+// created_at: 시스템에 기록된 시점
+// expired_at: 시스템에서 만료된 시점
+
 (:User)-[:OWNS]->(:Vault)
 (:Vault)-[:HAS_NOTE]->(:Note)
-(:Note)-[:MENTIONS]->(:Topic)
-(:Note)-[:PART_OF]->(:Project)
-(:Note)-[:CONTAINS]->(:Task)
+
+// Temporal 관계 (Graphiti Episode 기반)
+(:Note)-[:MENTIONS {
+  valid_at, invalid_at,
+  created_at, expired_at,
+  fact          // 관계에 대한 설명
+}]->(:Topic)
+
+(:Note)-[:PART_OF {valid_at, invalid_at, created_at, expired_at}]->(:Project)
+(:Note)-[:CONTAINS {valid_at, invalid_at, created_at, expired_at}]->(:Task)
+
+// 엔티티 간 관계 (자동 추출)
+(:Topic)-[:RELATED_TO {valid_at, invalid_at, fact}]->(:Topic)
+(:Project)-[:RELATED_TO {valid_at, invalid_at, fact}]->(:Topic)
+(:Person)-[:RELATED_TO {valid_at, invalid_at, fact}]->(:Project)
+
+// 클러스터 관계
 (:Cluster)-[:CONTAINS]->(:Note)
 (:Cluster)-[:CONTAINS]->(:Topic)
 (:Cluster)-[:SUB_CLUSTER]->(:Cluster)
+```
+
+**시간 쿼리 예시**:
+```cypher
+// 2024년 1월에 관심 있었던 주제들
+MATCH (n:Note)-[m:MENTIONS]->(t:Topic)
+WHERE m.valid_at <= date('2024-01-31')
+  AND (m.invalid_at IS NULL OR m.invalid_at >= date('2024-01-01'))
+RETURN t.name, count(n) as mentions
+ORDER BY mentions DESC
+
+// 최근 한 달간 변화된 관계
+MATCH (e1)-[r]->(e2)
+WHERE r.created_at >= datetime() - duration('P30D')
+RETURN type(r), e1.name, e2.name, r.fact
 ```
 
 ### 4.3 Neo4j 독립성 전략

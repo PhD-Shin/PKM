@@ -12,9 +12,14 @@ from app.services.context_service import get_note_context
 from app.services.llm_client import summarize_content
 from app.utils.cache import TTLCache
 from app.utils.auth import get_user_id_from_token
+from app.config import settings
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Feature flag for Graphiti (controlled via settings or env)
+USE_GRAPHITI = getattr(settings, 'use_graphiti', False)
 
 router = APIRouter(prefix="/notes", tags=["notes"])
 context_cache = TTLCache(ttl_seconds=300)  # 5분으로 연장
@@ -56,14 +61,43 @@ async def sync_note(payload: NoteSyncRequest):
 
         if content_for_ai:
             try:
-                # 1. 엔티티 추출
+                # 1. 엔티티 추출 (Graphiti 또는 기존 방식)
                 logger.info(f"Starting entity extraction for note: {payload.note.note_id[:50]}...")
-                extracted_nodes = process_note_to_graph(
-                    note_id=payload.note.note_id,
-                    content=content_for_ai,
-                    metadata={"tags": payload.note.tags}
-                )
-                logger.info(f"✅ Extracted {extracted_nodes} entities from note")
+
+                if USE_GRAPHITI:
+                    # Graphiti: 시간 인식 지식 그래프
+                    from app.services.graphiti_service import async_process_note
+                    # 실제 노트 수정 시간 파싱 (temporal KG에서 중요)
+                    note_updated_at = datetime.now()
+                    if payload.note.updated_at:
+                        try:
+                            # ISO format 파싱 (Z suffix 처리)
+                            updated_str = payload.note.updated_at.replace('Z', '+00:00')
+                            note_updated_at = datetime.fromisoformat(updated_str)
+                        except (ValueError, AttributeError):
+                            pass  # 파싱 실패시 현재 시간 사용
+
+                    graphiti_result = await async_process_note(
+                        note_id=payload.note.note_id,
+                        content=content_for_ai,
+                        updated_at=note_updated_at,
+                        metadata={
+                            "tags": payload.note.tags,
+                            "path": payload.note.path,
+                            "title": payload.note.title,
+                            "created_at": payload.note.created_at
+                        }
+                    )
+                    extracted_nodes = graphiti_result.get("nodes_extracted", 0)
+                    logger.info(f"✅ Graphiti extracted {extracted_nodes} entities from note")
+                else:
+                    # 기존 LLMGraphTransformer 방식
+                    extracted_nodes = process_note_to_graph(
+                        note_id=payload.note.note_id,
+                        content=content_for_ai,
+                        metadata={"tags": payload.note.tags}
+                    )
+                    logger.info(f"✅ Extracted {extracted_nodes} entities from note")
 
                 # 2. 임베딩 생성 및 저장
                 from app.services.vector_service import store_note_embedding

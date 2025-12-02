@@ -7,7 +7,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
 from app.db.neo4j import init_indices
 from app.config import settings
-from app.api import routes_notes, routes_context, routes_tasks, routes_review, routes_graph, routes_pattern
+from app.api import routes_notes, routes_context, routes_tasks, routes_review, routes_graph, routes_pattern, routes_temporal
 import logging
 
 # 로깅 설정
@@ -21,8 +21,30 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Didymos API...")
     init_indices()
+
+    # Initialize Graphiti if enabled
+    if settings.use_graphiti:
+        try:
+            from app.services.graphiti_service import GraphitiService
+            logger.info("🔥 Initializing Graphiti Temporal Knowledge Graph...")
+            await GraphitiService.get_instance()
+            logger.info("✅ Graphiti initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize Graphiti: {e}")
+            # Continue without Graphiti - fallback to legacy
+
     yield
-    # Shutdown logic if needed
+
+    # Shutdown: Close Graphiti connection
+    if settings.use_graphiti:
+        try:
+            from app.services.graphiti_service import GraphitiService
+            if GraphitiService._instance:
+                await GraphitiService._instance.close()
+                logger.info("Graphiti connection closed")
+        except Exception as e:
+            logger.error(f"Error closing Graphiti: {e}")
+
     logger.info("Shutting down Didymos API...")
 
 
@@ -52,6 +74,7 @@ app.include_router(routes_tasks.router, prefix=settings.api_prefix)
 app.include_router(routes_review.router, prefix=settings.api_prefix)
 app.include_router(routes_graph.router, prefix=settings.api_prefix)
 app.include_router(routes_pattern.router, prefix=settings.api_prefix)
+app.include_router(routes_temporal.router, prefix=settings.api_prefix)
 
 
 @app.get("/")

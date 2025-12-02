@@ -60,13 +60,14 @@
 ## 🏗️ 기술 아키텍처
 
 ### 스택
-- **Backend**: FastAPI, LangChain, LangGraph
+- **Backend**: FastAPI, LangChain, LangGraph, **Graphiti**
 - **Database**: Neo4j AuraDB
-- **AI**: Claude 3.5 Sonnet (클러스터 요약), OpenAI Embeddings (클러스터링)
+- **AI**: Claude 3.5 Sonnet (클러스터 요약), OpenAI Embeddings (클러스터링), **GPT-5 Mini** (엔티티 추출)
+- **Temporal KG**: **Graphiti** (Zep AI) - Bi-temporal 지식 그래프
 - **Frontend**: Obsidian Plugin (TypeScript), vis-network
 - **Clustering**: UMAP + HDBSCAN
 
-### 데이터 흐름
+### 데이터 흐름 (Graphiti Temporal KG)
 ```
 Obsidian 노트 수정
   ↓
@@ -74,16 +75,23 @@ Obsidian 노트 수정
   ↓
 FastAPI /notes/sync
   ↓
-LangChain LLMGraphTransformer
-  ↓
 ┌─────────────────────────────────────────┐
-│ Graph-based Entity Resolution (2단계)  │
-│ Stage 1: 엔티티 후보 + 관계 추출        │
-│ Stage 2: 관계 있는 엔티티만 필터링      │
-│ (고립 엔티티 제외 → 클러스터 품질 ↑)   │
+│ Graphiti Episode 생성                   │
+│ - reference_time = 노트 수정 시간       │
+│ - source = "Obsidian note"              │
 └─────────────────────────────────────────┘
   ↓
-Neo4j 저장 (Note, Topic, Project, Task)
+┌─────────────────────────────────────────┐
+│ Graphiti 자동 처리                      │
+│ 1. Entity 추출 + 요약 생성              │
+│ 2. Relation 추출 (fact 포함)            │
+│ 3. 기존 Entity와 병합/업데이트          │
+│ 4. Bi-temporal 시간 정보 기록           │
+│    - valid_at, invalid_at               │
+│    - created_at, expired_at             │
+└─────────────────────────────────────────┘
+  ↓
+Neo4j 저장 (Note, Topic, Project, Task, Person)
   ↓
 클러스터 캐시 무효화
   ↓
@@ -94,6 +102,11 @@ UMAP + HDBSCAN 클러스터링
 Claude 클러스터 요약 생성
   ↓
 vis-network 시각화
+
+시간 기반 쿼리 예시:
+- "2024년 1월에 내가 관심 있었던 주제는?"
+- "최근 한 달간 변화된 관계들"
+- "더 이상 유효하지 않은 지식 연결"
 ```
 
 ### Neo4j 독립성 전략
@@ -154,10 +167,10 @@ vis-network 시각화
 - [x] Settings / API Client / Main Plugin 구현
 - [x] 노트 저장 시 자동 동기화 및 알림
 
-### Phase 3: AI 온톨로지 추출 (Text2Graph + Graph-based Entity Resolution)
+### Phase 3: AI 온톨로지 추출 (Graphiti Temporal Knowledge Graph)
 **예상 시간**: 2~3시간 | [📖 상세 가이드](./phases/phase-3-ai.md)
 
-- [x] **LangChain `LLMGraphTransformer` 도입**
+- [x] **LangChain `LLMGraphTransformer` 도입** (레거시)
 - [x] `allowed_nodes` (Topic, Project, Task, Person) 설정
 - [x] `process_note_to_graph` 서비스 구현
 - [x] Note 노드와 추출된 엔티티 연결 로직
@@ -166,6 +179,11 @@ vis-network 시각화
   - Stage 2: 관계가 있는 엔티티만 Neo4j에 저장 (고립 엔티티 필터링)
   - 효과: "서울대학교" 같은 단순 언급 키워드 제외 → 클러스터 품질 향상
   - 영감: Palantir Ontology 관계 중심 모델링
+- [ ] **Graphiti 통합** 🔄 진행 중
+  - Graphiti Episode 기반 처리로 마이그레이션
+  - Bi-temporal 엣지 프로퍼티 추가 (valid_at, invalid_at, created_at, expired_at)
+  - 자동 엔티티 요약 생성
+  - 하이브리드 검색 (시맨틱 + BM25 + 그래프 순회)
 
 ### Phase 4: Context Panel (Hybrid Search)
 **예상 시간**: 4~5시간 | [📖 Backend](./phases/phase-4-context-backend.md) | [📖 Frontend](./phases/phase-4-context-frontend.md)
@@ -436,11 +454,12 @@ Didymos:
 
 ---
 
-## 🛠️ 기술 스택 (MVP Phase 11)
+## 🛠️ 기술 스택 (MVP Phase 11 + Graphiti)
 
-- **Backend**: FastAPI, **LangChain**, **LangGraph**
+- **Backend**: FastAPI, **LangChain**, **LangGraph**, **Graphiti**
 - **Database**: Neo4j AuraDB (무료 → Aura Professional 전환 예정)
-- **AI**: **Claude 3.5 Sonnet** (클러스터 요약), OpenAI Embeddings (의미론적 클러스터링)
+- **Temporal KG**: **Graphiti** (Zep AI) - Bi-temporal 지식 그래프, 자동 엔티티 해결
+- **AI**: **Claude 3.5 Sonnet** (클러스터 요약), **GPT-5 Mini** (엔티티 추출), OpenAI Embeddings (의미론적 클러스터링)
 - **Frontend**: Obsidian API, TypeScript, **vis-network**
 - **Clustering**: UMAP + HDBSCAN (의미론적 그룹화)
 - **Business**: Freemium 구독 ($7 Pro, $15 Research/월)
