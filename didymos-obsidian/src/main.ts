@@ -753,25 +753,7 @@ export default class DidymosPlugin extends Plugin {
    */
   getControlPanelActions(): ControlPanelAction[] {
     return [
-      // Views - with viewType for inline embedding
-      {
-        id: 'open-unified-panel',
-        name: 'Didymos Dashboard',
-        description: '통합 대시보드 열기',
-        icon: '🏠',
-        category: 'views',
-        viewType: UNIFIED_VIEW_TYPE,
-        callback: async () => await this.activateUnifiedView(),
-      },
-      {
-        id: 'open-context-panel',
-        name: 'Context Panel',
-        description: '현재 노트의 관련 컨텍스트 보기',
-        icon: '🔍',
-        category: 'views',
-        viewType: DIDYMOS_CONTEXT_VIEW_TYPE,
-        callback: async () => await this.activateContextView(),
-      },
+      // Views - MVP 핵심 기능만 (의사결정 지원)
       {
         id: 'open-graph-panel',
         name: 'Knowledge Graph',
@@ -817,7 +799,7 @@ export default class DidymosPlugin extends Plugin {
         viewType: INSIGHTS_VIEW_TYPE,
         callback: async () => await this.activateInsightsView(),
       },
-      // Actions
+      // Sync
       {
         id: 'sync-current-note',
         name: 'Sync Current Note',
@@ -832,59 +814,6 @@ export default class DidymosPlugin extends Plugin {
             new Notice('No active file to sync');
           }
         },
-      },
-      {
-        id: 'export-ontology-snapshot',
-        name: 'Export Ontology',
-        description: '온톨로지 스냅샷 내보내기',
-        icon: '📤',
-        category: 'actions',
-        callback: async () => {
-          const file = this.app.workspace.getActiveFile();
-          if (!file) {
-            new Notice('No active note to export');
-            return;
-          }
-          await this.exportOntologySnapshot(file);
-        },
-      },
-      {
-        id: 'generate-decision-note',
-        name: 'Generate Decision Note',
-        description: '의사결정 노트 생성',
-        icon: '📝',
-        category: 'actions',
-        callback: async () => {
-          const file = this.app.workspace.getActiveFile();
-          if (!file) {
-            new Notice('No active note to generate decision note');
-            return;
-          }
-          await this.generateDecisionNote(file);
-        },
-      },
-      // Templates
-      {
-        id: 'open-template-gallery',
-        name: 'Template Gallery',
-        description: '노트 템플릿 갤러리',
-        icon: '📚',
-        category: 'templates',
-        callback: () => {
-          new TemplateGalleryModal(
-            this.app,
-            this.templateService,
-            () => {}
-          ).open();
-        },
-      },
-      {
-        id: 'show-onboarding',
-        name: 'Show Onboarding',
-        description: '온보딩 가이드 다시 보기',
-        icon: '🎉',
-        category: 'templates',
-        callback: async () => await this.showOnboarding(),
       },
     ];
   }

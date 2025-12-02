@@ -124,27 +124,8 @@ export class DidymosGraphView extends ItemView {
       await this.resetEntities(resetBtn);
     });
 
-    // 클러스터링 옵션 (Vault 모드)
-    const clusteringControls = controls.createEl("div", { cls: "didymos-clustering-controls" });
-    clusteringControls.createEl("span", { text: "Clustering" });
-
-    const methodSelect = clusteringControls.createEl("select", { cls: "didymos-graph-select" });
-    [
-      { label: "Semantic (UMAP+HDBSCAN)", value: "semantic" },
-      { label: "Type-based (fallback)", value: "type_based" },
-    ].forEach((opt) => {
-      const option = methodSelect.createEl("option", { text: opt.label, value: opt.value });
-      if (opt.value === this.clusterMethod) option.selected = true;
-    });
-    methodSelect.addEventListener("change", async () => {
-      this.clusterMethod = methodSelect.value as typeof this.clusterMethod;
-      this.clusterForceRecompute = true; // 캐시 무시하고 재계산
-      if (this.viewMode === "vault") {
-        await this.renderVaultGraph();
-      }
-    });
-
-    const llmToggle = clusteringControls.createEl("label", { cls: "didymos-graph-toggle" });
+    // LLM Summary 토글 (비용 제어)
+    const llmToggle = controls.createEl("label", { cls: "didymos-graph-toggle" });
     const llmCheckbox = llmToggle.createEl("input", { type: "checkbox" });
     llmCheckbox.checked = this.includeClusterLLM;
     llmToggle.createSpan({ text: "LLM Summary" });
@@ -156,159 +137,15 @@ export class DidymosGraphView extends ItemView {
       }
     });
 
-    const recomputeBtn = clusteringControls.createEl("button", {
-      text: "Recompute",
-      cls: "didymos-sync-btn"
-    });
-    recomputeBtn.addEventListener("click", async () => {
-      this.clusterForceRecompute = true;
-      if (this.viewMode === "vault") {
-        await this.renderVaultGraph();
-      }
-    });
-
     // 폴더 필터 컨트롤 (PARA 노트 기법 지원)
     const folderControls = controls.createEl("div", { cls: "didymos-folder-controls" });
-    folderControls.createEl("span", { text: "📁 Folder Filter" });
+    folderControls.createEl("span", { text: "📁 Folder" });
 
     this.folderSelectEl = folderControls.createEl("div", { cls: "didymos-folder-select" });
-    this.folderSelectEl.createEl("span", { text: "Loading folders...", cls: "didymos-folder-loading" });
+    this.folderSelectEl.createEl("span", { text: "Loading...", cls: "didymos-folder-loading" });
 
     // 폴더 목록 로드
     this.loadFolders();
-
-    // Auto/Manual Hops Toggle
-    const hopControlGroup = controls.createEl("div", { cls: "didymos-hop-control-group" });
-
-    const autoHopToggle = hopControlGroup.createEl("label", { cls: "didymos-hop-toggle" });
-    const autoCheckbox = autoHopToggle.createEl("input", { type: "checkbox" });
-    autoCheckbox.checked = this.autoHops;
-    autoHopToggle.createSpan({ text: "Auto Hops" });
-
-    const hopSelect = hopControlGroup.createEl("select", { cls: "didymos-hop-select" });
-    ["1 Hop", "2 Hops", "3 Hops", "4 Hops", "5 Hops"].forEach((label, index) => {
-      const option = hopSelect.createEl("option", {
-        text: label,
-        value: String(index + 1),
-      });
-      if (index + 1 === this.currentHops) {
-        option.selected = true;
-      }
-    });
-
-    // 초기 상태 설정
-    if (this.autoHops) {
-      hopSelect.setAttribute("disabled", "true");
-      hopSelect.style.opacity = "0.5";
-    }
-
-    autoCheckbox.addEventListener("change", async () => {
-      this.autoHops = autoCheckbox.checked;
-      if (this.autoHops) {
-        hopSelect.setAttribute("disabled", "true");
-        hopSelect.style.opacity = "0.5";
-      } else {
-        hopSelect.removeAttribute("disabled");
-        hopSelect.style.opacity = "1";
-      }
-
-      // 그래프 다시 렌더링
-      if (this.viewMode === "note" && this.currentNoteId) {
-        await this.renderGraph(this.currentNoteId);
-      } else if (this.viewMode === "vault") {
-        await this.renderVaultGraph();
-      }
-    });
-
-    hopSelect.addEventListener("change", async () => {
-      this.currentHops = parseInt(hopSelect.value);
-      if (this.viewMode === "note" && this.currentNoteId) {
-        await this.renderGraph(this.currentNoteId);
-      } else if (this.viewMode === "vault") {
-        await this.renderVaultGraph();
-      }
-    });
-
-    const toggles = container.createEl("div", { cls: "didymos-graph-toggles" });
-    const mkToggle = (
-      label: string,
-      initial: boolean,
-      onChange: (v: boolean) => void
-    ) => {
-      const wrap = toggles.createEl("label", { cls: "didymos-graph-toggle" });
-      const checkbox = wrap.createEl("input", { type: "checkbox" });
-      checkbox.checked = initial;
-      wrap.createSpan({ text: label });
-      checkbox.addEventListener("change", async () => {
-        onChange(checkbox.checked);
-        if (this.viewMode === "note" && this.currentNoteId) {
-          await this.renderGraph(this.currentNoteId);
-        } else if (this.viewMode === "vault") {
-          await this.renderVaultGraph();
-        }
-      });
-    };
-
-    mkToggle("Topics", this.showTopics, (v) => (this.showTopics = v));
-    mkToggle("Projects", this.showProjects, (v) => (this.showProjects = v));
-    mkToggle("Tasks", this.showTasks, (v) => (this.showTasks = v));
-    mkToggle("Related", this.showRelated, (v) => (this.showRelated = v));
-
-    const presets = container.createEl("div", { cls: "didymos-graph-presets" });
-
-    const layoutSelect = presets.createEl("select", { cls: "didymos-graph-select" });
-    [
-      { label: "Force Layout", value: "force" },
-      { label: "Hierarchical", value: "hierarchical" },
-    ].forEach((opt) => {
-      const o = layoutSelect.createEl("option", { text: opt.label, value: opt.value });
-      if (opt.value === this.layoutPreset) o.selected = true;
-    });
-    layoutSelect.addEventListener("change", async () => {
-      this.layoutPreset = layoutSelect.value as typeof this.layoutPreset;
-      if (this.currentNoteId) await this.renderGraph(this.currentNoteId);
-    });
-
-    const themeSelect = presets.createEl("select", { cls: "didymos-graph-select" });
-    [
-      { label: "Default", value: "default" },
-      { label: "Midnight", value: "midnight" },
-      { label: "Contrast", value: "contrast" },
-    ].forEach((opt) => {
-      const o = themeSelect.createEl("option", { text: opt.label, value: opt.value });
-      if (opt.value === this.themePreset) o.selected = true;
-    });
-    themeSelect.addEventListener("change", async () => {
-      this.themePreset = themeSelect.value as typeof this.themePreset;
-      if (this.currentNoteId) await this.renderGraph(this.currentNoteId);
-    });
-
-    const spacingSelect = presets.createEl("select", { cls: "didymos-graph-select" });
-    [
-      { label: "Normal Spacing", value: "regular" },
-      { label: "Compact", value: "compact" },
-    ].forEach((opt) => {
-      const o = spacingSelect.createEl("option", { text: opt.label, value: opt.value });
-      if (opt.value === this.layoutSpacing) o.selected = true;
-    });
-    spacingSelect.addEventListener("change", async () => {
-      this.layoutSpacing = spacingSelect.value as typeof this.layoutSpacing;
-      if (this.currentNoteId) await this.renderGraph(this.currentNoteId);
-    });
-
-    const fontSelect = presets.createEl("select", { cls: "didymos-graph-select" });
-    [
-      { label: "Normal Font", value: "normal" },
-      { label: "Compact Font", value: "compact" },
-      { label: "Large Font", value: "large" },
-    ].forEach((opt) => {
-      const o = fontSelect.createEl("option", { text: opt.label, value: opt.value });
-      if (opt.value === this.fontPreset) o.selected = true;
-    });
-    fontSelect.addEventListener("change", async () => {
-      this.fontPreset = fontSelect.value as typeof this.fontPreset;
-      if (this.currentNoteId) await this.renderGraph(this.currentNoteId);
-    });
 
     // Status Bar
     const statusBar = container.createEl("div", { cls: "didymos-graph-status" });

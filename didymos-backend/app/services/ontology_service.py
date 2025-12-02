@@ -46,9 +46,10 @@ def normalize_entity_id(entity_id: str) -> str:
     return normalized
 
 # LLM 초기화
+# NOTE: gpt-5-mini does NOT support temperature parameter (only default=1 allowed)
+# See CLAUDE.md for details
 llm = ChatOpenAI(
-    model="gpt-5-mini",  # GPT-5 Mini
-    temperature=0,        # 추출은 결정적이어야 함
+    model="gpt-5-mini",
     api_key=settings.openai_api_key
 )
 
