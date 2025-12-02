@@ -1,10 +1,11 @@
 # 📘 Didymos - PRD (Product Requirement Document)
 
-> AI-Powered 2nd Brain for Obsidian - 의미론적 지식 그래프 + 생산성 엔진
+> AI-Powered 2nd Brain for Obsidian - 시간 인식 지식 그래프 + GraphRAG 검색 엔진
 
 **최종 업데이트**: 2025-12-02
-**현재 단계**: MVP 개발 (2주 Sprint)
+**현재 단계**: MVP 완료, Phase 12 (GraphRAG 검색 강화) 준비 중
 **비즈니스 모델**: Obsidian 플러그인 구독 ($7-15/월)
+**핵심 기술**: Graphiti (저장/추출) + neo4j-graphrag (검색/질의)
 
 ---
 
@@ -17,13 +18,63 @@ Didymos는 Obsidian 사용자에게 단순한 유사도 검색을 넘어 **의�
 
 ### 핵심 차별점
 
-| 기능 | Smart Connections | Didymos |
-|------|-------------------|---------|
-| **검색** | 유사 노트 찾기 | ✅ + 구조화된 맥락 |
-| **구조** | 평면적 | ✅ 계층적 지식 그래프 |
-| **분석** | 없음 | ✅ 의사결정 인사이트 |
-| **추적** | 없음 | ✅ 지식 진화 타임라인 |
-| **가격** | 무료 | $7/월 (Pro), $15/월 (Research) |
+| 기능 | Smart Connections | InfraNodus | Didymos |
+|------|-------------------|------------|---------|
+| **검색** | 유사 노트 찾기 | 단어 빈도 기반 | ✅ GraphRAG 하이브리드 |
+| **그래프 단위** | 노트 | **단어** (co-occurrence) | ✅ **개념** (ontology) |
+| **관계 추출** | 없음 | 동시 출현만 | ✅ Subject-Relation-Object |
+| **의미 구조** | 평면적 | 단어 네트워크 | ✅ SKOS 계층 구조 |
+| **시간 추적** | 없음 | 없음 | ✅ Bi-temporal |
+| **가격** | 무료 | $9/월 | $7-15/월 |
+
+### 왜 "단어 기반 그래프"가 아닌 "개념 기반 온톨로지"인가?
+
+**InfraNodus의 구조적 한계**:
+
+InfraNodus는 **단어 단위 Co-occurrence 그래프**를 사용합니다:
+1. 문장을 토큰으로 분리
+2. 같은 문장에 등장한 단어를 연결
+3. Betweenness centrality로 중심 단어 찾기
+
+이 방식은 빠르지만 **치명적인 정보 손실**이 있습니다:
+
+```
+❌ 문제 1: 의미는 관계에서 발생
+   "학생이 교사를 평가했다" vs "교사가 학생을 평가했다"
+   → 단어는 동일, 의미는 완전히 다름
+   → InfraNodus는 동일한 그래프를 그림
+
+❌ 문제 2: Co-occurrence는 노이즈가 큼
+   "커피를 마시며 논문을 쓰다가 비가 와서 집에 갔다"
+   → 커피-논문-비-집 모두 연결됨
+   → 의미적 관계가 아닌 우연한 동시 출현
+
+❌ 문제 3: 핵심 개념 식별 불가
+   "모델", "연구", "것" 같은 빈약한 단어가 높은 중심성
+   → 실제 핵심 개념(AI, Raman Scattering) 파악 어려움
+```
+
+**Didymos의 개념 기반 접근**:
+
+```
+✅ 개념 추출 (Concept Extraction)
+   단어가 아닌 의미 있는 개념 목록 추출
+   예: "Digital Twin", "Ontology Schema", "Raman Scattering"
+
+✅ 관계 추출 (Relation Extraction)
+   Subject-Relation-Object 트리플로 저장
+   예: (Digital Twin)-[USES]->(Ontology Schema)
+
+✅ SKOS 온톨로지 자동 생성
+   BROADER/NARROWER/RELATED 계층 구조
+   예: (Machine Learning)-[BROADER]->(AI)
+
+✅ 지식 구조화
+   단어 그래프가 아닌 진짜 지식 그래프
+   연구자/지식노동자를 위한 의미 있는 구조
+```
+
+**결론**: 단어 연결성은 "언어의 껍데기", 개념 연결성이 "지식의 구조"
 
 ### 시장 기회
 
@@ -133,9 +184,9 @@ Didymos는 Obsidian 사용자에게 단순한 유사도 검색을 넘어 **의�
 
 ---
 
-## 3. MVP 기능 범위 (2주 Sprint)
+## 3. MVP 기능 범위 (2주 Sprint) - ✅ 완료
 
-### 3.1 핵심 기능 (Must Have)
+### 3.1 핵심 기능 (Must Have) - ✅ 구현 완료
 
 #### ✅ Temporal Knowledge Graph (Graphiti 기반)
 
@@ -231,88 +282,236 @@ Control Panel:
 └── Weekly Review
 ```
 
-### 3.2 Nice to Have (Post-MVP)
-- 계층적 드릴다운 (Level 1 → 2 → 3)
-- 시간대별 변화 추적
-- 커스텀 분석 쿼리
-- 팀 공유 기능
+#### ✅ 잊혀진 지식 리마인더 (Spaced Repetition)
+```
+30일 이상 미접근 지식 자동 발견 → 리마인더 표시 → 확인 시 last_accessed 갱신
+
+API:
+- GET /temporal/insights/stale?days=30&limit=20
+- POST /temporal/insights/mark-reviewed
+- POST /temporal/insights/mark-reviewed-batch
+
+UI:
+- "💡 Forgotten" 버튼 (Graph View)
+- 30일 / 60일 필터 탭
+- 개별/일괄 확인 기능
+```
+
+### 3.2 Phase 12: GraphRAG 검색 강화 (neo4j-graphrag 통합)
+
+**목표**: Graphiti 저장 + neo4j-graphrag 검색 병용으로 "내 2nd brain에게 묻는 챗봇" 구현
+
+#### 아키텍처
+```
+[Obsidian] → [Graphiti] → [Neo4j] ← [neo4j-graphrag Retrievers] → [LLM 답변]
+            (저장/추출)              (검색/질의)
+```
+
+- **Graphiti 역할**: 노트 저장, 엔티티 추출, 시간 관리, 자동 요약
+- **neo4j-graphrag 역할**: 검색 레이어 (Vector, Cypher, Hybrid)
+
+#### neo4j-graphrag Retriever 전략
+
+| Retriever | 용도 | 예시 질의 |
+|-----------|------|----------|
+| `VectorRetriever` | 의미 검색 | "온톨로지 관련 아이디어 보여줘" |
+| `VectorCypherRetriever` | 그래프+벡터 복합 | "온톨로지와 연결된 프로젝트/사람 한 번에" |
+| `Text2CypherRetriever` | 조건 필터 | "2024년 3월 이후 연구 노트만" |
+| `ToolsRetriever` | LLM 자동 선택 | 위 3개를 상황에 맞게 자동 선택 |
+
+```python
+# neo4j-graphrag 검색 레이어 (예정)
+from neo4j_graphrag.retrievers import (
+    VectorRetriever, VectorCypherRetriever,
+    Text2CypherRetriever, ToolsRetriever
+)
+
+tools = [
+    vector_retriever.convert_to_tool(name="semantic_note_search"),
+    vector_cypher_retriever.convert_to_tool(name="graph_context_search"),
+    text2cypher_retriever.convert_to_tool(name="structured_graph_query"),
+]
+
+tools_retriever = ToolsRetriever(tools=tools, llm=OpenAILLM())
+# → 사용자는 자연어로 질문, LLM이 적절한 검색 전략 자동 선택
+```
+
+### 3.3 Phase 13: SKOS 온톨로지 자동 생성 (MVP 핵심)
+
+> ⚠️ **MVP 필수**: BROADER/NARROWER 계층 구조 없이는 InfraNodus의 "단어 그래프"와 차별화 불가
+
+**목표**: 개념 간 계층 관계 자동 추출 → 진정한 온톨로지 구현
+
+```
+InfraNodus: 단어 동시출현 → 평면적 네트워크
+Didymos without SKOS: 개념 추출 → 여전히 평면적
+Didymos with SKOS: 개념 + 계층 구조 → 진정한 온톨로지 ✅
+```
+
+**구현 계획**:
+- LLM 프롬프트로 BROADER/NARROWER/RELATED 관계 추출
+- 예: "Machine Learning" → BROADER → "AI"
+- 클러스터링 시 계층 구조 활용
+- Graph View에 상위/하위 개념 시각화
+
+### 3.4 Phase 14: ToolsRetriever 통합 (MVP 핵심)
+
+> ⚠️ **MVP 필수**: 자연어 질의 → 자동 검색 전략 선택이 "내 2nd brain에게 묻기"의 핵심 UX
+
+**목표**: 사용자가 자연어로 질문하면 LLM이 적절한 검색 도구 자동 선택
+
+```
+현재: 사용자가 수동으로 검색 방법 선택
+목표: "최근 AI 관련 프로젝트 알려줘" → LLM이 자동으로 적절한 검색 조합
+```
+
+**구현 계획**:
+- ToolsRetriever 설정 (Vector + Cypher + Temporal 조합)
+- 자연어 질의 UI (Chat 형태 또는 Command Palette)
+- LLM이 질의 분석 → 적절한 Retriever 자동 선택
+
+### 3.5 Phase 15+: 향후 로드맵 (Post-MVP)
+
+| Phase | 기능 | 설명 |
+|-------|------|------|
+| **15** | Person/Source 노드 분리 | FOAF 기반, YAML front matter 파싱 |
+| **16** | Project/Task 통합 | PARA 폴더 구조 연동 |
+| **17** | PROV-O Activity | 아이디어 계보 추적 (Reading → Summarizing → Brainstorming) |
+| **18** | 팀 공유 기능 | 멀티 사용자 지원 |
 
 ---
 
 ## 4. 기술 아키텍처
 
-### 4.1 시스템 구조
+### 4.1 시스템 구조 (Graphiti + neo4j-graphrag 병용)
 
 ```
 ┌─────────────────────┐
 │  Obsidian Plugin    │ TypeScript
 │  (Frontend)         │
 └──────────┬──────────┘
-           │ REST API
-           │ HTTPS
-┌──────────▼──────────┐
-│  FastAPI Server     │ Python 3.11
-│  - Routes           │
-│  - Services         │
-│  - LLM Client       │
-└──────────┬──────────┘
+           │ REST API (HTTPS)
            │
-    ┌──────┴──────┐
-    │             │
-┌───▼────┐   ┌───▼──────┐
-│ Neo4j  │   │ Claude   │
-│ AuraDB │   │ API      │
-└────────┘   └──────────┘
+┌──────────▼──────────────────────────────────────┐
+│  FastAPI Server (Python 3.11)                   │
+│  ┌────────────────┐  ┌────────────────────────┐ │
+│  │ Graphiti       │  │ neo4j-graphrag         │ │
+│  │ (저장/추출)     │  │ (검색/질의)            │ │
+│  │ - Episode 처리  │  │ - VectorRetriever     │ │
+│  │ - Entity 해결   │  │ - Text2CypherRetriever│ │
+│  │ - 시간 관리     │  │ - ToolsRetriever      │ │
+│  └───────┬────────┘  └───────────┬────────────┘ │
+│          │                       │              │
+│          └───────────┬───────────┘              │
+└──────────────────────┼──────────────────────────┘
+                       │
+          ┌────────────┼────────────┐
+          │            │            │
+     ┌────▼────┐  ┌────▼────┐  ┌───▼──────┐
+     │ Neo4j   │  │ OpenAI  │  │ Claude   │
+     │ AuraDB  │  │ (임베딩) │  │ (요약)   │
+     └─────────┘  └─────────┘  └──────────┘
 ```
 
-### 4.2 데이터 모델 (Neo4j + Graphiti Temporal)
+**레이어 역할 분담**:
+| 레이어 | 라이브러리 | 역할 |
+|--------|-----------|------|
+| **저장** | Graphiti | Episode → Entity 추출, Bi-temporal 관계, 자동 요약 |
+| **검색** | neo4j-graphrag | Vector/Cypher/Hybrid 검색, LLM 기반 툴 선택 |
+| **DB** | Neo4j | 그래프 저장소, 벡터 인덱스 |
+| **LLM** | OpenAI + Claude | 임베딩, 클러스터 요약, 검색 전략 선택 |
+
+### 4.2 데이터 모델 (PKM 온톨로지 v1 + Graphiti Temporal)
+
+**온톨로지 설계 기반**:
+- [SKOS](https://www.w3.org/TR/skos-reference/) - 개념/주제 계층 구조 (BROADER, NARROWER, RELATED)
+- [FOAF](https://en.wikipedia.org/wiki/FOAF) - 사람/관계 표현
+- [PROV-O](https://www.w3.org/TR/prov-o/) - 지식 출처/과정 추적
 
 ```cypher
-// 노드 (Graphiti EntityNode 확장)
+// ==========================================
+// 핵심 노드 (PKM Ontology v1)
+// ==========================================
+
+// 기본 노드
 (:User {id, created_at})
 (:Vault {id, name})
-(:Note {note_id, title, path, content_hash, updated_at})
+(:Note {note_id, title, path, content_hash, updated_at, last_accessed})
 
-// Graphiti Entity Nodes (자동 요약 포함)
-(:Topic {
+// Concept (SKOS 기반) - 주제/키워드/태그
+(:Concept {
   id, name,
-  summary,           // Graphiti 자동 생성 요약
+  summary,              // Graphiti 자동 생성 요약
   importance_score,
-  created_at         // 최초 발견 시점
+  created_at,
+  last_accessed         // 잊혀진 지식 리마인더용
 })
+
+// Person (FOAF 기반) - 사람/저자/협력자
+(:Person {
+  id, name,
+  summary,
+  created_at
+})
+
+// Source (출처) - 책/논문/URL/영상
+(:Source {
+  id, name, type,       // type: book, paper, url, video
+  url, doi,
+  created_at
+})
+
+// Project/Task (생산성)
 (:Project {id, name, status, summary, created_at})
 (:Task {id, title, status, priority, due_date, summary, created_at})
-(:Person {id, name, summary, created_at})
+
+// Cluster (의미론적 그룹)
 (:Cluster {id, name, level, summary, key_insights[]})
 
-// Graphiti Bi-Temporal 엣지 (모든 관계에 적용)
+// Activity (PROV-O 기반, Phase 16 예정) - 아이디어 생성 과정
+// (:Activity {id, type, timestamp})  // type: Reading, Summarizing, Brainstorming
+
+// ==========================================
+// 관계 (Bi-Temporal + SKOS/FOAF/PROV-O)
+// ==========================================
+
+// Graphiti Bi-Temporal 엣지 속성 (모든 관계에 적용)
 // valid_at: 관계가 실제로 시작된 시점 (사용자 관점)
 // invalid_at: 관계가 종료된 시점 (NULL = 현재 유효)
 // created_at: 시스템에 기록된 시점
 // expired_at: 시스템에서 만료된 시점
 
+// 기본 관계
 (:User)-[:OWNS]->(:Vault)
 (:Vault)-[:HAS_NOTE]->(:Note)
 
-// Temporal 관계 (Graphiti Episode 기반)
-(:Note)-[:MENTIONS {
-  valid_at, invalid_at,
-  created_at, expired_at,
-  fact          // 관계에 대한 설명
-}]->(:Topic)
+// Note → Entity 관계
+(:Note)-[:MENTIONS {valid_at, invalid_at, fact}]->(:Concept)
+(:Note)-[:AUTHORED_BY {valid_at, invalid_at}]->(:Person)
+(:Note)-[:DERIVED_FROM {valid_at, invalid_at}]->(:Source)
+(:Note)-[:PART_OF {valid_at, invalid_at}]->(:Project)
+(:Note)-[:CONTAINS {valid_at, invalid_at}]->(:Task)
+(:Note)-[:LINKED_TO]->(:Note)  // Obsidian [[wikilink]]
 
-(:Note)-[:PART_OF {valid_at, invalid_at, created_at, expired_at}]->(:Project)
-(:Note)-[:CONTAINS {valid_at, invalid_at, created_at, expired_at}]->(:Task)
+// SKOS 계층 관계 (Concept 간)
+(:Concept)-[:BROADER]->(:Concept)   // 상위 개념 (예: Machine Learning → AI)
+(:Concept)-[:NARROWER]->(:Concept)  // 하위 개념 (예: AI → Machine Learning)
+(:Concept)-[:RELATED]->(:Concept)   // 연관 개념 (예: AI ↔ Data Science)
 
-// 엔티티 간 관계 (자동 추출)
-(:Topic)-[:RELATED_TO {valid_at, invalid_at, fact}]->(:Topic)
-(:Project)-[:RELATED_TO {valid_at, invalid_at, fact}]->(:Topic)
-(:Person)-[:RELATED_TO {valid_at, invalid_at, fact}]->(:Project)
+// FOAF 관계 (Person 간)
+(:Person)-[:KNOWS]->(:Person)
+(:Person)-[:INTERESTED_IN]->(:Concept)
+(:Person)-[:INFLUENCED]->(:Note)
+
+// PROV-O 관계 (Phase 16 예정)
+// (:Activity)-[:USED]->(:Source|:Note)
+// (:Activity)-[:GENERATED]->(:Note)
+// (:Activity)-[:ASSOCIATED_WITH]->(:Person)
 
 // 클러스터 관계
-(:Cluster)-[:CONTAINS]->(:Note)
-(:Cluster)-[:CONTAINS]->(:Topic)
+(:Cluster)-[:CONTAINS]->(:Note|:Concept)
 (:Cluster)-[:SUB_CLUSTER]->(:Cluster)
+(:Cluster)-[:RELATED_TO {weight}]->(:Cluster)  // 공유 엔티티 수 기반
 ```
 
 **시간 쿼리 예시**:
@@ -499,9 +698,11 @@ Didymos: "지식의 큰 그림 보기"
 ### 9.1 핵심 엔드포인트
 
 ```
+# 노트 동기화
 POST   /notes/sync
-       노트 동기화 및 온톨로지 자동 추출
+       노트 동기화 및 Graphiti Episode 처리
 
+# 그래프 시각화
 GET    /graph/vault/clustered?vault_id={id}&user_token={token}
        클러스터링된 Vault 그래프
        Response: {clusters[], edges[], summary}
@@ -512,11 +713,45 @@ POST   /graph/vault/clustered/invalidate
 GET    /notes/context/{note_id}
        노트 컨텍스트 (관련 topics, projects, tasks)
 
+# 주간 리뷰
 GET    /review/weekly?vault_id={id}
        주간 리뷰 데이터
 ```
 
-### 9.2 클러스터 API 응답 형식
+### 9.2 Temporal Knowledge Graph API (✅ 구현 완료)
+
+```
+# Graphiti 상태 확인
+GET    /temporal/status
+       Response: {graphiti_enabled, connection, neo4j_uri}
+
+# 시간 인식 검색
+POST   /temporal/search
+       Body: {query, start_date?, end_date?, num_results}
+       Graphiti 하이브리드 검색 (시맨틱 + BM25 + 그래프 순회)
+
+# 엔티티 시간 변화 추적
+GET    /temporal/evolution/{entity_name}?start_date=&end_date=
+       "2024년 1월에 관심 있었던 주제" 같은 쿼리 지원
+
+# 잊혀진 지식 리마인더
+GET    /temporal/insights/stale?days=30&limit=20
+       N일 이상 미접근 지식 조회
+
+POST   /temporal/insights/mark-reviewed
+       Body: {uuid}
+       지식 확인 완료 → last_accessed 갱신
+
+POST   /temporal/insights/mark-reviewed-batch
+       Body: [uuid1, uuid2, ...]
+       일괄 확인 완료
+
+# 최근 변화
+GET    /temporal/insights/recent?days=7
+       최근 N일간 추가/변경된 엔티티/관계
+```
+
+### 9.3 클러스터 API 응답 형식
 
 ```json
 {
@@ -661,6 +896,11 @@ INSIGHTS:
 
 ---
 
-**문서 버전**: 2.0
+**문서 버전**: 3.0
 **최종 검토**: 2025-12-02
-**다음 리뷰**: MVP 런칭 후 (2025-12-16)
+**주요 변경**:
+- Graphiti + neo4j-graphrag 병용 아키텍처 추가
+- PKM 온톨로지 v1 (SKOS/FOAF/PROV-O 기반) 설계
+- 잊혀진 지식 리마인더 기능 추가
+- Phase 12-17 로드맵 정의
+**다음 리뷰**: Phase 12 완료 후

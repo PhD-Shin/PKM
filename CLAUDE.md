@@ -32,33 +32,77 @@ llm = ChatOpenAI(
 - File: `didymos-backend/app/services/ontology_service.py`
 - The LLM is used for entity extraction via LangChain's `LLMGraphTransformer`
 
-## Graphiti Temporal Knowledge Graph
+## Knowledge Graph Architecture (Graphiti + neo4j-graphrag)
 
-### Overview
-Didymos uses [Graphiti](https://github.com/getzep/graphiti) (by Zep AI) for temporal knowledge graph capabilities.
+### Dual-Layer Design
+Didymos uses a hybrid architecture:
+- **Storage Layer (Graphiti)**: Entity extraction, temporal management, episode processing
+- **Query Layer (neo4j-graphrag)**: GraphRAG retrieval strategies for search
 
-### Bi-Temporal Model
+### Graphiti - Storage Layer
+[Graphiti](https://github.com/getzep/graphiti) (by Zep AI) for temporal knowledge graph capabilities.
+
+#### Bi-Temporal Model
 All edges have 4 time fields:
 - `valid_at`: When the relationship actually started (user perspective)
 - `invalid_at`: When the relationship ended (NULL = currently valid)
 - `created_at`: When recorded in the system
 - `expired_at`: When expired in the system
 
-### Enabling Graphiti
+#### Enabling Graphiti
 Set `USE_GRAPHITI=true` in environment variables to enable Graphiti.
-Default is `false` (uses legacy LLMGraphTransformer).
+Default is `true` (Graphiti is now the default).
 
-### Key Features
+#### Key Features
 - **Episode-based Processing**: Notes become Episodes with automatic entity extraction
 - **Entity Resolution**: Automatic deduplication and summarization
-- **Hybrid Search**: Semantic + BM25 + Graph traversal
 - **Temporal Queries**: "What was I interested in during January 2024?"
 
-### API Endpoints
+### neo4j-graphrag - Query Layer
+[neo4j-graphrag](https://github.com/neo4j/neo4j-graphrag-python) for advanced retrieval strategies.
+
+#### Retriever Strategies
+| Retriever | Use Case | Didymos Application |
+|-----------|----------|---------------------|
+| **VectorRetriever** | Similarity search | Context Panel similar notes |
+| **VectorCypherRetriever** | Vector + graph traversal | Cluster exploration |
+| **Text2CypherRetriever** | Natural language → Cypher | "List recent projects" |
+| **HybridRetriever** | Vector + BM25 keyword | Full vault search |
+| **ToolsRetriever** | LLM chooses tools | Complex queries (future) |
+
+### Temporal API Endpoints
 - `GET /api/v1/temporal/status` - Check Graphiti status
 - `POST /api/v1/temporal/search` - Temporal-aware search
 - `GET /api/v1/temporal/evolution/{entity_name}` - Track entity changes over time
-- `GET /api/v1/temporal/insights/recent` - Recent knowledge changes
+- `GET /api/v1/temporal/insights/stale` - Forgotten knowledge reminder (30+ days)
+- `POST /api/v1/temporal/insights/mark-reviewed` - Mark knowledge as reviewed
+
+## PKM Ontology v1 (SKOS/FOAF/PROV-O)
+
+### Node Types
+Based on international standards:
+- **Concept** (SKOS): Ideas, topics, themes
+- **Note**: Obsidian notes (atomic knowledge units)
+- **Person** (FOAF): People mentioned
+- **Source** (PROV-O): References, citations
+- **Project/Task**: GTD-style work items
+- **Cluster**: AI-generated semantic groups
+
+### Relationship Types (SKOS Hierarchy)
+```
+BROADER       - 상위 개념 (Machine Learning → AI)
+NARROWER      - 하위 개념 (AI → Machine Learning)
+RELATED       - 관련 개념 (Machine Learning ↔ Statistics)
+MENTIONS      - Note → Entity
+DERIVED_FROM  - 출처 추적 (PROV-O)
+KNOWS         - Person ↔ Person (FOAF)
+```
+
+### Why Concept-Based Ontology (Not Word-Based)
+Unlike tools like InfraNodus that use word co-occurrence:
+- **Didymos extracts concepts**: "Machine Learning" not ["machine", "learning"]
+- **Didymos extracts relations**: Subject-Predicate-Object triples
+- **Result**: True knowledge structure, not just word frequencies
 
 ## Project Structure
 

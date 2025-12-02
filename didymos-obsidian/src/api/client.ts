@@ -140,6 +140,51 @@ export interface StaleKnowledgeResponse {
   message: string;
 }
 
+// ============================================
+// GraphRAG Search Types (Phase 12-14)
+// ============================================
+
+export type SearchMode = "vector" | "hybrid" | "text2cypher" | "agentic";
+
+export interface SearchResult {
+  note_id: string;
+  title: string;
+  path: string;
+  content: string;
+  updated_at: string;
+  score?: number;
+  mentioned_entities?: Array<{
+    id: string;
+    name: string;
+    type: string;
+  }>;
+  hierarchy?: {
+    broader: Array<{ id: string; name: string }>;
+    narrower: Array<{ id: string; name: string }>;
+  };
+  related_entities?: Array<{ id: string; name: string }>;
+}
+
+export interface SearchResponse {
+  status: string;
+  mode: string;
+  query: string;
+  count: number;
+  results: SearchResult[];
+  generated_cypher?: string;  // text2cypher 모드
+  selected_retriever?: string;  // agentic 모드
+  reasoning?: string;  // agentic 모드
+  fallback?: boolean;  // agentic fallback 여부
+}
+
+export interface SearchStatusResponse {
+  status: string;
+  message: string;
+  available_modes: SearchMode[];
+  features?: Record<string, string>;
+  tools_retriever_available?: boolean;
+}
+
 export interface ClusterNode {
   id: string;
   name: string;
@@ -415,6 +460,104 @@ export class DidymosAPI {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(uuids),
     });
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  // ============================================
+  // GraphRAG Search APIs (Phase 12-14)
+  // ============================================
+
+  /**
+   * 통합 검색 API
+   * @param query 검색 쿼리
+   * @param mode 검색 모드 (vector, hybrid, text2cypher, agentic)
+   * @param topK 반환할 결과 수
+   */
+  async search(
+    query: string,
+    mode: SearchMode = "hybrid",
+    topK: number = 10
+  ): Promise<SearchResponse> {
+    const response = await fetch(this.baseUrl("/search"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        query,
+        mode,
+        top_k: topK,
+        vault_id: this.settings.vaultId,
+      }),
+    });
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  /**
+   * 벡터 유사도 검색
+   * 노트 임베딩 기반 시맨틱 검색
+   */
+  async searchVector(query: string, topK: number = 10): Promise<SearchResponse> {
+    const url = new URL(this.baseUrl("/search/vector"));
+    url.searchParams.set("query", query);
+    url.searchParams.set("top_k", String(topK));
+    url.searchParams.set("vault_id", this.settings.vaultId);
+
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  /**
+   * 하이브리드 검색 (벡터 + 그래프 컨텍스트)
+   * 권장 검색 모드: 벡터 검색 + SKOS 계층 관계 확장
+   */
+  async searchHybrid(query: string, topK: number = 10): Promise<SearchResponse> {
+    const url = new URL(this.baseUrl("/search/hybrid"));
+    url.searchParams.set("query", query);
+    url.searchParams.set("top_k", String(topK));
+    url.searchParams.set("vault_id", this.settings.vaultId);
+
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  /**
+   * 자연어 → Cypher 검색
+   * 자연어 질문을 Cypher 쿼리로 자동 변환
+   */
+  async searchText2Cypher(query: string): Promise<SearchResponse> {
+    const url = new URL(this.baseUrl("/search/text2cypher"));
+    url.searchParams.set("query", query);
+    url.searchParams.set("vault_id", this.settings.vaultId);
+
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  /**
+   * Agentic RAG 검색 (Phase 14)
+   * LLM이 질문을 분석하고 최적의 retriever를 자동 선택
+   */
+  async searchAgentic(query: string): Promise<SearchResponse> {
+    const url = new URL(this.baseUrl("/search/agentic"));
+    url.searchParams.set("query", query);
+    url.searchParams.set("vault_id", this.settings.vaultId);
+
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  /**
+   * 검색 서비스 상태 확인
+   */
+  async getSearchStatus(): Promise<SearchStatusResponse> {
+    const url = new URL(this.baseUrl("/search/status"));
+
+    const response = await fetch(url.toString());
     if (!response.ok) throw new Error(`API error: ${response.status}`);
     return response.json();
   }

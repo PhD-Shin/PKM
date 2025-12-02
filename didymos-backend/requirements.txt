@@ -26,6 +26,9 @@ numpy>=1.24.0
 # Temporal Knowledge Graph (Graphiti)
 graphiti-core>=0.5.0
 
+# Neo4j GraphRAG (Phase 12: Hybrid Retrieval)
+neo4j-graphrag>=1.0.0
+
 # 제거된 패키지 (사용하지 않음):
 # - langchain-community: 불필요한 통합 기능
 # - langchain-neo4j: 직접 neo4j 드라이버 사용

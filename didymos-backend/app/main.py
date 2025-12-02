@@ -7,7 +7,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from contextlib import asynccontextmanager
 from app.db.neo4j import init_indices
 from app.config import settings
-from app.api import routes_notes, routes_context, routes_tasks, routes_review, routes_graph, routes_pattern, routes_temporal
+from app.api import routes_notes, routes_context, routes_tasks, routes_review, routes_graph, routes_pattern, routes_temporal, routes_search
 import logging
 
 # 로깅 설정
@@ -75,6 +75,7 @@ app.include_router(routes_review.router, prefix=settings.api_prefix)
 app.include_router(routes_graph.router, prefix=settings.api_prefix)
 app.include_router(routes_pattern.router, prefix=settings.api_prefix)
 app.include_router(routes_temporal.router, prefix=settings.api_prefix)
+app.include_router(routes_search.router, prefix=settings.api_prefix)
 
 
 @app.get("/")

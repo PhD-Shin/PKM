@@ -33,7 +33,10 @@
       "Bash(railway logs:*)",
       "Bash(npm:*)",
       "Bash(railway up:*)",
-      "Bash(pip show:*)"
+      "Bash(pip show:*)",
+      "Bash(/usr/local/Cellar/python@3.11/3.11.14_1/bin/python3.11 -m pip install:*)",
+      "Bash(/usr/local/Cellar/python@3.11/3.11.14_1/bin/python3.11:*)",
+      "Bash(railway variables:*)"
     ],
     "deny": [],
     "ask": []

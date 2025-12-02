@@ -93,19 +93,49 @@ CUSTOM_EXTRACTION_PROMPT = ChatPromptTemplate.from_messages([
 3. **Searchability Test**: "If I search for this entity, would I want to find THIS note?" If no, don't extract.
 4. **No Generic Terms**: Never extract: 연구, 논문, 프로젝트, 회의, 미팅, 정리, 메모, 노트
 
-## Relationships:
-- RELATED_TO: Conceptual connection between extracted entities
-- PART_OF: Hierarchical relationship (subtopic of larger topic)
+## Relationships (SKOS-based Ontology):
+
+**Hierarchical Relationships:**
+- BROADER: The source concept is a subtype of the target (more specific → more general)
+  - Example: (Machine Learning)-[BROADER]->(Artificial Intelligence)
+  - Example: (CNN)-[BROADER]->(Neural Network)
+  - Ask: "Is concept A a specific type/subfield of concept B?"
+
+- NARROWER: The source concept contains the target as a subtype (more general → more specific)
+  - Example: (Artificial Intelligence)-[NARROWER]->(Machine Learning)
+  - This is the inverse of BROADER. If A-[BROADER]->B, then B-[NARROWER]->A
+
+**Associative Relationships:**
+- RELATED_TO: Thematically connected but NOT hierarchical
+  - Example: (Machine Learning)-[RELATED_TO]->(Statistics)
+  - Example: (Knowledge Graph)-[RELATED_TO]->(Natural Language Processing)
+  - Ask: "Are these concepts often discussed together without one being a subtype of the other?"
+
+**Other Relationships:**
+- PART_OF: Component relationship (part of a larger whole)
+  - Example: (Attention Mechanism)-[PART_OF]->(Transformer Architecture)
+- ASSIGNED_TO: Task/Project assignment
+- HAS_TASK: Project containing tasks
+
+## Critical: SKOS Hierarchy Rules
+1. **Detect Hierarchies**: When extracting topics, identify if any concept is a specialization of another
+2. **Bidirectionality**: If you identify A as a subtype of B, create A-[BROADER]->B
+3. **No Redundant Edges**: Don't create both RELATED_TO and BROADER between same concepts
+4. **Prefer Hierarchy**: If there's a clear specialization relationship, use BROADER not RELATED_TO
 
 Think step by step about what this note is REALLY about before extracting."""),
     ("human", "{input}")
 ])
 
 # 그래프 변환기 설정
+# SKOS 관계: BROADER (하위→상위), NARROWER (상위→하위), RELATED_TO (연관)
 llm_transformer = LLMGraphTransformer(
     llm=llm,
     allowed_nodes=["Topic", "Project", "Task", "Person"],
-    allowed_relationships=["MENTIONS", "RELATED_TO", "PART_OF", "ASSIGNED_TO", "HAS_TASK"],
+    allowed_relationships=[
+        "MENTIONS", "RELATED_TO", "PART_OF", "ASSIGNED_TO", "HAS_TASK",
+        "BROADER", "NARROWER"  # SKOS 계층 관계
+    ],
     strict_mode=False,
     node_properties=["name", "description"],
     prompt=CUSTOM_EXTRACTION_PROMPT
@@ -319,7 +349,7 @@ def save_node_via_http(client, node):
 
 
 def save_relationship_via_http(client, rel):
-    """HTTP API를 통해 관계 저장"""
+    """HTTP API를 통해 관계 저장 (SKOS 양방향성 포함)"""
     try:
         # rel.source: Node
         # rel.target: Node
@@ -349,8 +379,52 @@ def save_relationship_via_http(client, rel):
         client.query(cypher, params)
         logger.debug(f"Saved relationship: {rel.source.id}-[{rel.type}]->{rel.target.id}")
 
+        # SKOS 양방향성 보장: BROADER ↔ NARROWER
+        if rel.type == "BROADER":
+            # A-[BROADER]->B 이면 B-[NARROWER]->A 도 생성
+            _ensure_skos_inverse(client, rel.target.type, target_id,
+                                rel.source.type, source_id, "NARROWER")
+        elif rel.type == "NARROWER":
+            # A-[NARROWER]->B 이면 B-[BROADER]->A 도 생성
+            _ensure_skos_inverse(client, rel.target.type, target_id,
+                                rel.source.type, source_id, "BROADER")
+
     except Exception as e:
         logger.error(f"Error saving relationship: {e}")
+
+
+def _ensure_skos_inverse(client, source_type: str, source_id: str,
+                         target_type: str, target_id: str, rel_type: str):
+    """
+    SKOS 역관계 생성 (양방향성 보장)
+
+    BROADER와 NARROWER는 서로 역관계:
+    - A-[BROADER]->B 이면 B-[NARROWER]->A
+    - A-[NARROWER]->B 이면 B-[BROADER]->A
+    """
+    try:
+        cypher = f"""
+        MATCH (source:{source_type} {{id: $source_id}})
+        MATCH (target:{target_type} {{id: $target_id}})
+        MERGE (source)-[r:{rel_type}]->(target)
+        ON CREATE SET
+            r.created_at = datetime(),
+            r.last_seen = datetime(),
+            r.auto_generated = true
+        ON MATCH SET
+            r.last_seen = datetime()
+        """
+
+        params = {
+            "source_id": source_id,
+            "target_id": target_id
+        }
+
+        client.query(cypher, params)
+        logger.debug(f"Created SKOS inverse: {source_id}-[{rel_type}]->{target_id}")
+
+    except Exception as e:
+        logger.warning(f"Failed to create SKOS inverse relationship: {e}")
 
 
 def link_extracted_entities_to_note(client, note_id, graph_doc):
