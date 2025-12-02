@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 # Feature flag for Graphiti (controlled via settings or env)
 USE_GRAPHITI = getattr(settings, 'use_graphiti', False)
 
+# Rate limiting: 동시 AI 처리 제한 (OpenAI Rate Limit 방지)
+_ai_semaphore = asyncio.Semaphore(2)  # 최대 2개 동시 처리
+_AI_PROCESSING_DELAY = 1.0  # 처리 간 대기 시간 (초)
+
 router = APIRouter(prefix="/notes", tags=["notes"])
 context_cache = TTLCache(ttl_seconds=300)  # 5분으로 연장
 graph_cache = TTLCache(ttl_seconds=300)  # 5분으로 연장
@@ -39,59 +43,67 @@ async def process_ai_in_background(
     """
     백그라운드에서 AI 처리 (엔티티 추출 + 임베딩 생성)
     API 응답을 빠르게 반환하고 AI 작업은 비동기로 처리
+    세마포어로 동시 처리 개수 제한 (OpenAI Rate Limit 방지)
     """
-    try:
-        logger.info(f"🔄 Background AI processing started for: {note_id[:50]}...")
+    async with _ai_semaphore:
+        # Rate limiting: 처리 간 대기 시간
+        await asyncio.sleep(_AI_PROCESSING_DELAY)
 
-        # 1. 엔티티 추출
-        if USE_GRAPHITI:
-            from app.services.graphiti_service import async_process_note
-            note_updated_at = datetime.now()
-            if updated_at:
-                try:
-                    updated_str = updated_at.replace('Z', '+00:00')
-                    note_updated_at = datetime.fromisoformat(updated_str)
-                except (ValueError, AttributeError):
-                    pass
+        try:
+            logger.info(f"🔄 Background AI processing started for: {note_id[:50]}...")
 
-            graphiti_result = await async_process_note(
-                note_id=note_id,
-                content=content,
-                updated_at=note_updated_at,
-                metadata={
-                    "tags": tags,
-                    "path": path,
-                    "title": title,
-                    "created_at": created_at
-                }
-            )
-            extracted_nodes = graphiti_result.get("nodes_extracted", 0)
-            logger.info(f"✅ Graphiti extracted {extracted_nodes} entities from note")
-        else:
-            extracted_nodes = process_note_to_graph(
+            # 1. 엔티티 추출 (Hybrid Mode: Graphiti + PKM Labels)
+            if USE_GRAPHITI:
+                # Hybrid mode: Graphiti extracts EntityNode, then add PKM labels
+                from app.services.hybrid_graphiti_service import process_note_hybrid
+                note_updated_at = datetime.now()
+                if updated_at:
+                    try:
+                        updated_str = updated_at.replace('Z', '+00:00')
+                        note_updated_at = datetime.fromisoformat(updated_str)
+                    except (ValueError, AttributeError):
+                        pass
+
+                hybrid_result = await process_note_hybrid(
+                    note_id=note_id,
+                    content=content,
+                    updated_at=note_updated_at,
+                    metadata={
+                        "tags": tags,
+                        "path": path,
+                        "title": title,
+                        "created_at": created_at
+                    }
+                )
+                extracted_nodes = hybrid_result.get("nodes_extracted", 0)
+                pkm_labels = hybrid_result.get("pkm_labels_added", 0)
+                mentions = hybrid_result.get("mentions_created", 0)
+                logger.info(f"✅ Hybrid mode: {extracted_nodes} entities, {pkm_labels} PKM labels, {mentions} MENTIONS")
+            else:
+                extracted_nodes = process_note_to_graph(
+                    note_id=note_id,
+                    content=content,
+                    metadata={"tags": tags}
+                )
+                logger.info(f"✅ Extracted {extracted_nodes} entities from note")
+
+            # 2. 임베딩 생성 및 저장
+            from app.services.vector_service import store_note_embedding
+            embedding_created = store_note_embedding(
                 note_id=note_id,
                 content=content,
                 metadata={"tags": tags}
             )
-            logger.info(f"✅ Extracted {extracted_nodes} entities from note")
 
-        # 2. 임베딩 생성 및 저장
-        from app.services.vector_service import store_note_embedding
-        embedding_created = store_note_embedding(
-            note_id=note_id,
-            content=content,
-            metadata={"tags": tags}
-        )
+            if embedding_created:
+                logger.info(f"✅ Embedding created for note: {note_id[:50]}")
 
-        if embedding_created:
-            logger.info(f"✅ Embedding created for note: {note_id[:50]}")
+            # 캐시 무효화
+            context_cache.clear(note_id)
+            graph_cache.clear_prefix(f"{note_id}:")
 
-        # 캐시 무효화
-        context_cache.clear(note_id)
-        graph_cache.clear_prefix(f"{note_id}:")
-
-    except Exception as e:
-        logger.error(f"❌ Background AI processing failed for {note_id[:50]}: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(f"❌ Background AI processing failed for {note_id[:50]}: {e}", exc_info=True)
 
 
 @router.post("/sync", response_model=NoteSyncResponse)

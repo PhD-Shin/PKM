@@ -2,6 +2,8 @@
 LangChain 기반 Text2Graph 서비스 (HTTP API 버전)
 """
 import re
+import time
+import threading
 from langchain_experimental.graph_transformers import LLMGraphTransformer
 from langchain_openai import ChatOpenAI
 from langchain_core.documents import Document
@@ -10,6 +12,11 @@ from app.config import settings
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Rate limiting을 위한 글로벌 락과 타임스탬프
+_llm_call_lock = threading.Lock()
+_last_llm_call_time = 0.0
+_MIN_INTERVAL_SECONDS = 0.5  # LLM 호출 사이 최소 간격 (500ms)
 
 # 동의어 매핑 (정규화용)
 ENTITY_SYNONYMS = {
@@ -191,6 +198,49 @@ def filter_entities_by_relations(graph_doc) -> tuple:
     return filtered_nodes, filtered_relationships
 
 
+def _rate_limited_llm_call(doc):
+    """
+    Rate limiting이 적용된 LLM 호출
+    동시 호출을 제한하고, 429 에러 발생 시 재시도
+    """
+    global _last_llm_call_time
+
+    max_retries = 3
+    base_delay = 2.0  # 초기 대기 시간 (초)
+
+    for attempt in range(max_retries):
+        try:
+            # Rate limiting: 이전 호출 후 최소 간격 보장
+            with _llm_call_lock:
+                elapsed = time.time() - _last_llm_call_time
+                if elapsed < _MIN_INTERVAL_SECONDS:
+                    sleep_time = _MIN_INTERVAL_SECONDS - elapsed
+                    logger.debug(f"Rate limiting: sleeping {sleep_time:.2f}s")
+                    time.sleep(sleep_time)
+                _last_llm_call_time = time.time()
+
+            # LLM 호출
+            return llm_transformer.convert_to_graph_documents([doc])
+
+        except Exception as e:
+            error_str = str(e).lower()
+
+            # Rate limit 에러 (429) 또는 관련 에러
+            if "rate" in error_str or "429" in error_str or "too many" in error_str:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(f"Rate limit hit (attempt {attempt + 1}/{max_retries}), "
+                             f"waiting {delay}s before retry...")
+                time.sleep(delay)
+                continue
+            else:
+                # 다른 에러는 즉시 raise
+                raise
+
+    # 모든 재시도 실패
+    logger.error(f"LLM call failed after {max_retries} retries due to rate limiting")
+    return None
+
+
 def process_note_to_graph(note_id: str, content: str, metadata: dict = None):
     """
     노트 텍스트를 그래프로 변환하여 Neo4j에 저장
@@ -225,10 +275,10 @@ def process_note_to_graph(note_id: str, content: str, metadata: dict = None):
             }
         )
 
-        # 2. Stage 1: Text -> GraphDocument 변환 (LLM 호출)
+        # 2. Stage 1: Text -> GraphDocument 변환 (LLM 호출 - rate limited)
         # LLM이 엔티티 후보와 관계를 동시에 추출
         logger.info(f"[Stage 1] Extracting entity candidates from note: {note_id}")
-        graph_documents = llm_transformer.convert_to_graph_documents([doc])
+        graph_documents = _rate_limited_llm_call(doc)
 
         if not graph_documents or not graph_documents[0].nodes:
             logger.info(f"No entities extracted from {note_id}")

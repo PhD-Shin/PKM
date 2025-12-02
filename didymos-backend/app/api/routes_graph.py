@@ -520,6 +520,28 @@ async def get_debug_stats(
             {}
         )
 
+        # 6. 엔티티 수 (Topic, Project, Task, Person)
+        entity_counts = client.query(
+            """
+            MATCH (v:Vault {id: $vault_id})-[:HAS_NOTE]->(n:Note)-[:MENTIONS]->(e)
+            WHERE e:Topic OR e:Project OR e:Task OR e:Person
+            WITH labels(e)[0] AS entity_type, count(DISTINCT e) AS cnt
+            RETURN entity_type, cnt
+            """,
+            {"vault_id": vault_id}
+        )
+
+        # 7. Note-Entity MENTIONS 관계 수
+        mentions_count = client.query(
+            """
+            MATCH (v:Vault {id: $vault_id})-[:HAS_NOTE]->(n:Note)-[m:MENTIONS]->(e)
+            RETURN count(m) AS count
+            """,
+            {"vault_id": vault_id}
+        )
+
+        entity_stats = {r["entity_type"]: r["cnt"] for r in (entity_counts or [])}
+
         return {
             "vault_id_queried": vault_id,
             "vault_exists": len(vault_check or []) > 0,
@@ -527,8 +549,97 @@ async def get_debug_stats(
             "total_notes_in_db": (total_notes[0]["count"] if total_notes else 0),
             "notes_in_vault": (vault_notes[0]["count"] if vault_notes else 0),
             "notes_with_embedding": (notes_with_embedding[0]["count"] if notes_with_embedding else 0),
+            "entity_counts": entity_stats,
+            "total_mentions": (mentions_count[0]["count"] if mentions_count else 0),
         }
 
     except Exception as e:
         logger.error(f"Debug stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/migrate/graphiti-to-hybrid")
+async def migrate_graphiti_to_hybrid(
+    vault_id: str = Query(None, description="Vault ID (optional, all if not specified)"),
+    max_iterations: int = Query(10, description="Maximum migration iterations")
+) -> Dict[str, Any]:
+    """
+    Graphiti EntityNode에 PKM 레이블 추가 마이그레이션
+
+    Graphiti가 생성한 EntityNode에 Topic/Project/Task/Person 레이블을 추가하여
+    cluster_service와 호환되도록 합니다.
+
+    이 작업은 다음을 수행합니다:
+    1. EntityNode에 PKM 타입 레이블 추가 (Topic, Project, Task, Person)
+    2. Episode-Entity 관계를 Note-Entity MENTIONS로 변환
+    """
+    try:
+        from app.services.hybrid_graphiti_service import migrate_graphiti_to_hybrid
+
+        logger.info(f"Starting Graphiti → Hybrid migration (vault: {vault_id or 'all'})")
+
+        result = await migrate_graphiti_to_hybrid(
+            vault_id=vault_id,
+            max_iterations=max_iterations
+        )
+
+        return {
+            "status": "success",
+            "migration_result": result
+        }
+
+    except Exception as e:
+        logger.error(f"Migration error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/debug/entity-nodes")
+async def get_entity_node_stats() -> Dict[str, Any]:
+    """
+    Graphiti EntityNode 통계 조회
+
+    EntityNode 중 PKM 레이블이 있는 것과 없는 것의 수를 확인합니다.
+    """
+    try:
+        client = get_neo4j_client()
+
+        # EntityNode 전체 수
+        total = client.query("MATCH (e:EntityNode) RETURN count(e) as count", {})
+
+        # PKM 레이블이 있는 EntityNode
+        with_pkm = client.query("""
+            MATCH (e:EntityNode)
+            WHERE e:Topic OR e:Project OR e:Task OR e:Person
+            RETURN count(e) as count
+        """, {})
+
+        # PKM 레이블이 없는 EntityNode
+        without_pkm = client.query("""
+            MATCH (e:EntityNode)
+            WHERE NOT e:Topic AND NOT e:Project AND NOT e:Task AND NOT e:Person
+            RETURN count(e) as count
+        """, {})
+
+        # PKM 타입별 통계
+        by_type = client.query("""
+            MATCH (e:EntityNode)
+            WHERE e:Topic OR e:Project OR e:Task OR e:Person
+            WITH CASE
+                WHEN e:Topic THEN 'Topic'
+                WHEN e:Project THEN 'Project'
+                WHEN e:Task THEN 'Task'
+                WHEN e:Person THEN 'Person'
+            END as pkm_type
+            RETURN pkm_type, count(*) as count
+        """, {})
+
+        return {
+            "total_entity_nodes": total[0]["count"] if total else 0,
+            "with_pkm_labels": with_pkm[0]["count"] if with_pkm else 0,
+            "without_pkm_labels": without_pkm[0]["count"] if without_pkm else 0,
+            "by_pkm_type": {r["pkm_type"]: r["count"] for r in (by_type or [])}
+        }
+
+    except Exception as e:
+        logger.error(f"EntityNode stats error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

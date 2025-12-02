@@ -115,24 +115,40 @@ export class DidymosGraphView extends ItemView {
       }
     });
 
-    // 🔴 Reset Entities 버튼 (MVP 개발용)
+    // 🔄 Force Re-Sync 버튼 (캐시 무시하고 전체 재동기화)
     const resetBtn = controls.createEl("button", {
-      text: "🔴 Reset Entities",
+      text: "🔄 Force Re-Sync",
       cls: "didymos-sync-btn didymos-reset-btn"
     });
-    resetBtn.style.backgroundColor = "#dc3545";
+    resetBtn.style.backgroundColor = "#6c757d";
     resetBtn.style.color = "white";
 
     resetBtn.addEventListener("click", async () => {
+      const targetFolder = this.selectedFolders.length > 0
+        ? this.selectedFolders[0]
+        : "전체 Vault";
+
       const confirmed = confirm(
-        "⚠️ 모든 엔티티(Topic, Project, Task, Person)를 삭제합니다.\n" +
-        "Note 노드는 유지됩니다.\n\n" +
-        "삭제 후 'Sync All Notes'를 실행하여 새로운 Graph-based Entity Resolution 로직으로 재추출하세요.\n\n" +
+        `⚠️ "${targetFolder}"의 모든 노트를 강제로 다시 동기화합니다.\n\n` +
+        "이전 sync 시간을 무시하고 모든 노트를 다시 처리합니다.\n" +
+        "(엔티티 추출 + 임베딩 생성)\n\n" +
         "계속하시겠습니까?"
       );
       if (!confirmed) return;
 
-      await this.resetEntities(resetBtn);
+      // lastBulkSyncTime 리셋
+      this.settings.lastBulkSyncTime = 0;
+      await (this.plugin as any).saveSettings();
+
+      // 선택된 폴더가 있으면 폴더 sync, 없으면 전체 sync
+      if (this.selectedFolders.length > 0) {
+        await this.syncFolderNotes(resetBtn, this.selectedFolders[0]);
+      } else {
+        const syncBtn = this.containerEl.querySelector(".didymos-sync-btn:not(.didymos-reset-btn)") as HTMLElement;
+        if (syncBtn) {
+          await this.syncAllNotes(syncBtn);
+        }
+      }
     });
 
     // 💡 잊혀진 지식 버튼
@@ -166,6 +182,22 @@ export class DidymosGraphView extends ItemView {
 
     this.folderSelectEl = folderControls.createEl("div", { cls: "didymos-folder-select" });
     this.folderSelectEl.createEl("span", { text: "Loading...", cls: "didymos-folder-loading" });
+
+    // Sync Folder 버튼
+    const syncFolderBtn = folderControls.createEl("button", {
+      text: "🔄 Sync Folder",
+      cls: "didymos-sync-btn didymos-sync-folder-btn"
+    });
+    syncFolderBtn.style.marginLeft = "8px";
+    syncFolderBtn.style.fontSize = "12px";
+
+    syncFolderBtn.addEventListener("click", async () => {
+      if (this.selectedFolders.length === 0) {
+        alert("폴더를 먼저 선택해주세요.");
+        return;
+      }
+      await this.syncFolderNotes(syncFolderBtn, this.selectedFolders[0]);
+    });
 
     // 폴더 목록 로드
     this.loadFolders();
@@ -220,6 +252,137 @@ export class DidymosGraphView extends ItemView {
     button.textContent = "🔄 Sync All Notes";
     button.removeClass("syncing");
     console.log("⛔ Sync cancelled by user");
+  }
+
+  /**
+   * 특정 폴더의 노트만 Sync
+   */
+  async syncFolderNotes(button: HTMLElement, folderPath: string) {
+    if (this.isSyncing) {
+      return;
+    }
+
+    this.syncAbortController = new AbortController();
+    this.isSyncing = true;
+
+    try {
+      const originalText = button.textContent || "";
+      button.textContent = "⛔ Cancel";
+      button.addClass("syncing");
+
+      // 해당 폴더의 .md 파일만 필터링
+      const allMarkdownFiles = this.app.vault.getMarkdownFiles();
+      const folderFiles = allMarkdownFiles.filter(file =>
+        file.path.startsWith(folderPath + "/") || file.path === folderPath
+      );
+
+      const totalFiles = folderFiles.length;
+
+      if (totalFiles === 0) {
+        button.textContent = `⚠️ No files in ${folderPath}`;
+        this.isSyncing = false;
+        this.syncAbortController = null;
+        setTimeout(() => {
+          button.textContent = originalText;
+          button.removeClass("syncing");
+        }, 3000);
+        return;
+      }
+
+      let processed = 0;
+      let succeeded = 0;
+      let failed = 0;
+
+      for (const file of folderFiles) {
+        if (this.syncAbortController?.signal.aborted) {
+          console.log(`⛔ Folder sync aborted at ${processed}/${totalFiles}`);
+          break;
+        }
+
+        try {
+          const content = await this.app.vault.read(file);
+          const noteData = {
+            note_id: file.path,
+            title: file.basename,
+            path: file.path,
+            content: content,
+            tags: [],
+            created_at: new Date(file.stat.ctime).toISOString(),
+            updated_at: new Date(file.stat.mtime).toISOString(),
+          };
+
+          const response = await fetch(
+            `${this.settings.apiEndpoint}/notes/sync`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                user_token: this.settings.userToken,
+                vault_id: this.settings.vaultId,
+                note: noteData,
+                privacy_mode: "full",
+              }),
+              signal: this.syncAbortController?.signal,
+            }
+          );
+
+          if (response.ok) {
+            succeeded++;
+          } else {
+            failed++;
+            console.error(`Failed to sync ${file.path}: ${response.status}`);
+          }
+        } catch (error: any) {
+          if (error.name === "AbortError") {
+            console.log(`⛔ Fetch aborted for ${file.path}`);
+            break;
+          }
+          failed++;
+          console.error(`Error syncing ${file.path}:`, error);
+        }
+
+        processed++;
+        if (processed % 5 === 0 || processed === totalFiles) {
+          if (!this.syncAbortController?.signal.aborted) {
+            button.textContent = `⛔ (${processed}/${totalFiles})`;
+          }
+        }
+      }
+
+      if (this.syncAbortController?.signal.aborted) {
+        button.textContent = `⚠️ Cancelled (${succeeded})`;
+        setTimeout(() => {
+          button.textContent = originalText;
+          button.removeClass("syncing");
+        }, 3000);
+        return;
+      }
+
+      button.textContent = `✅ ${succeeded}/${totalFiles}`;
+      setTimeout(() => {
+        button.textContent = originalText;
+        button.removeClass("syncing");
+      }, 3000);
+
+      // 그래프 새로고침
+      if (this.viewMode === "vault") {
+        this.clusterForceRecompute = true;
+        await this.renderVaultGraph();
+      }
+
+    } catch (error: any) {
+      if (error.name !== "AbortError") {
+        button.textContent = `❌ Failed`;
+        console.error("Folder sync error:", error);
+      }
+      setTimeout(() => {
+        button.textContent = "🔄 Sync Folder";
+        button.removeClass("syncing");
+      }, 3000);
+    } finally {
+      this.isSyncing = false;
+      this.syncAbortController = null;
+    }
   }
 
   async syncAllNotes(button: HTMLElement) {

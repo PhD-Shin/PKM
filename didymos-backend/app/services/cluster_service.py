@@ -44,8 +44,9 @@ except ImportError:
 def compute_entity_graph_centrality(
     client,
     note_ids: List[str],
-    include_types: List[str] = ["Topic", "Project", "Task"],
-    vault_total_notes: int = None
+    include_types: List[str] = ["Topic", "Project", "Task", "Person"],
+    vault_total_notes: int = None,
+    include_entity_node: bool = True
 ) -> Dict[str, Dict[str, Any]]:
     """
     그래프 구조 기반 엔티티 중요도 계산 (IDF 가중치 포함)
@@ -61,6 +62,7 @@ def compute_entity_graph_centrality(
         note_ids: 분석할 노트 ID 리스트
         include_types: 포함할 엔티티 타입
         vault_total_notes: 전체 vault의 노트 수 (IDF 계산용)
+        include_entity_node: Graphiti EntityNode도 포함할지 여부
 
     Returns:
         {entity_id: {name, type, centrality_score, degree, bridge_score, co_occurrence, idf_weight}}
@@ -68,7 +70,12 @@ def compute_entity_graph_centrality(
     if not note_ids:
         return {}
 
-    type_filter = " OR ".join([f"'{t}' IN labels(entity)" for t in include_types])
+    # PKM 타입 필터 + EntityNode (Graphiti) 지원
+    type_conditions = [f"'{t}' IN labels(entity)" for t in include_types]
+    if include_entity_node:
+        # EntityNode with PKM labels (hybrid mode)
+        type_conditions.append("'EntityNode' IN labels(entity)")
+    type_filter = " OR ".join(type_conditions)
 
     # Step 1: 각 엔티티의 degree (연결된 노트 수) 계산
     cypher_degree = f"""
@@ -287,8 +294,9 @@ def compute_clusters_louvain(
     client,
     vault_id: str,
     target_clusters: int = 10,
-    include_types: List[str] = ["Topic", "Project", "Task"],
-    folder_prefix: str = None
+    include_types: List[str] = ["Topic", "Project", "Task", "Person"],
+    folder_prefix: str = None,
+    include_entity_node: bool = True
 ) -> Dict[str, Any]:
     """
     Louvain 알고리즘을 사용한 커뮤니티 탐지
@@ -299,13 +307,18 @@ def compute_clusters_louvain(
         target_clusters: 목표 클러스터 개수
         include_types: 클러스터링에 포함할 노드 타입
         folder_prefix: 폴더 경로 필터 (예: '1_프로젝트/')
+        include_entity_node: Graphiti EntityNode도 포함할지 여부
 
     Returns:
         클러스터 데이터
     """
     try:
         # Step 1: 서브그래프 투영 (Notes 제외, Entities만)
-        type_filter = " OR ".join([f"'{t}' IN labels(entity)" for t in include_types])
+        # PKM 타입 + EntityNode (Graphiti) 지원
+        type_conditions = [f"'{t}' IN labels(entity)" for t in include_types]
+        if include_entity_node:
+            type_conditions.append("'EntityNode' IN labels(entity)")
+        type_filter = " OR ".join(type_conditions)
         folder_filter = ""
         if folder_prefix:
             folder_filter = "AND note.note_id STARTS WITH $folder_prefix"
@@ -433,8 +446,9 @@ def compute_clusters_semantic(
     client,
     vault_id: str,
     target_clusters: int = 10,
-    include_types: List[str] = ["Topic", "Project", "Task"],
-    folder_prefix: str = None
+    include_types: List[str] = ["Topic", "Project", "Task", "Person"],
+    folder_prefix: str = None,
+    include_entity_node: bool = True
 ) -> Dict[str, Any]:
     """
     UMAP + HDBSCAN을 사용한 의미론적 클러스터링
@@ -447,6 +461,7 @@ def compute_clusters_semantic(
         target_clusters: 목표 클러스터 개수 (참고용, HDBSCAN이 자동 결정)
         include_types: 클러스터링에 포함할 노드 타입
         folder_prefix: 폴더 경로 필터 (예: '1_프로젝트/')
+        include_entity_node: Graphiti EntityNode도 포함할지 여부
 
     Returns:
         클러스터 데이터

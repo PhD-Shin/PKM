@@ -25,11 +25,10 @@ class Settings(BaseSettings):
     # OpenAI
     openai_api_key: str
 
-    # Graphiti Temporal KG
-    # Graphiti uses its own schema (EntityNode, Edge) which is incompatible
-    # with our PKM ontology (Topic, Project, Task, Person)
-    # Disabled until cluster_service is updated to support Graphiti schema
-    use_graphiti: bool = False
+    # Graphiti Temporal KG (Hybrid Mode)
+    # Graphiti extracts EntityNode, then we add PKM labels (Topic/Project/Task/Person)
+    # This enables both Graphiti's temporal features and PKM clustering compatibility
+    use_graphiti: bool = True
 
     # CORS
     cors_origins: str = '["*"]'
