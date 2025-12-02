@@ -111,9 +111,63 @@ llm_transformer = LLMGraphTransformer(
 )
 
 
+def filter_entities_by_relations(graph_doc) -> tuple:
+    """
+    Graph-based Entity Resolution: 관계가 있는 엔티티만 필터링
+
+    LLM이 추출한 엔티티 중에서 다른 엔티티와 관계(RELATED_TO, PART_OF 등)가
+    있는 엔티티만 유지합니다. 관계가 없는 고립 엔티티는 단순 언급으로 간주하여 제외.
+
+    Args:
+        graph_doc: LLM이 추출한 GraphDocument
+
+    Returns:
+        (filtered_nodes, filtered_relationships): 필터링된 노드와 관계
+    """
+    if not graph_doc.nodes:
+        return [], []
+
+    # 관계에 참여하는 엔티티 ID 수집
+    connected_entity_ids = set()
+    for rel in graph_doc.relationships:
+        # Note-Entity 관계는 제외하고, Entity-Entity 관계만 고려
+        # MENTIONS는 Note→Entity 관계이므로 제외
+        if rel.type not in ["MENTIONS"]:
+            source_id = normalize_entity_id(rel.source.id)
+            target_id = normalize_entity_id(rel.target.id)
+            connected_entity_ids.add(source_id)
+            connected_entity_ids.add(target_id)
+
+    # 연결된 엔티티만 필터링
+    filtered_nodes = []
+    filtered_node_ids = set()
+
+    for node in graph_doc.nodes:
+        normalized_id = normalize_entity_id(node.id)
+        if normalized_id in connected_entity_ids:
+            filtered_nodes.append(node)
+            filtered_node_ids.add(normalized_id)
+
+    # 필터링된 노드에 해당하는 관계만 유지
+    filtered_relationships = []
+    for rel in graph_doc.relationships:
+        source_id = normalize_entity_id(rel.source.id)
+        target_id = normalize_entity_id(rel.target.id)
+        # 양쪽 노드가 모두 필터링된 노드에 있는 경우만 유지
+        if source_id in filtered_node_ids and target_id in filtered_node_ids:
+            filtered_relationships.append(rel)
+
+    return filtered_nodes, filtered_relationships
+
+
 def process_note_to_graph(note_id: str, content: str, metadata: dict = None):
     """
     노트 텍스트를 그래프로 변환하여 Neo4j에 저장
+
+    Graph-based Entity Resolution (2단계 추출):
+    - Stage 1: LLM이 엔티티 후보 + 관계 동시 추출
+    - Stage 2: 관계(RELATED_TO, PART_OF)가 있는 엔티티만 저장
+    - 고립 엔티티(관계 없음)는 단순 언급으로 간주하여 제외
 
     Args:
         note_id: 노트 ID
@@ -121,7 +175,7 @@ def process_note_to_graph(note_id: str, content: str, metadata: dict = None):
         metadata: 메타데이터 (tags 등)
 
     Returns:
-        추출된 노드 개수
+        추출된 노드 개수 (필터링 후)
     """
     if not content or len(content.strip()) < 10:
         logger.info(f"Content too short for {note_id}, skipping extraction")
@@ -140,8 +194,9 @@ def process_note_to_graph(note_id: str, content: str, metadata: dict = None):
             }
         )
 
-        # 2. Text -> GraphDocument 변환 (LLM 호출)
-        logger.info(f"Extracting graph from note: {note_id}")
+        # 2. Stage 1: Text -> GraphDocument 변환 (LLM 호출)
+        # LLM이 엔티티 후보와 관계를 동시에 추출
+        logger.info(f"[Stage 1] Extracting entity candidates from note: {note_id}")
         graph_documents = llm_transformer.convert_to_graph_documents([doc])
 
         if not graph_documents or not graph_documents[0].nodes:
@@ -149,24 +204,76 @@ def process_note_to_graph(note_id: str, content: str, metadata: dict = None):
             return 0
 
         graph_doc = graph_documents[0]
+        original_count = len(graph_doc.nodes)
+        original_rel_count = len(graph_doc.relationships)
 
-        # 3. 노드 저장
-        for node in graph_doc.nodes:
+        # 3. Stage 2: Graph-based Entity Resolution
+        # 관계가 있는 엔티티만 필터링 (고립 엔티티 제외)
+        logger.info(f"[Stage 2] Filtering entities by relations...")
+        filtered_nodes, filtered_relationships = filter_entities_by_relations(graph_doc)
+
+        filtered_count = len(filtered_nodes)
+        excluded_count = original_count - filtered_count
+
+        if excluded_count > 0:
+            # 제외된 엔티티 로깅 (디버깅용)
+            excluded_ids = set(normalize_entity_id(n.id) for n in graph_doc.nodes) - \
+                          set(normalize_entity_id(n.id) for n in filtered_nodes)
+            logger.info(f"[Stage 2] Excluded {excluded_count} isolated entities: {list(excluded_ids)[:5]}...")
+
+        if not filtered_nodes:
+            logger.info(f"No connected entities found in {note_id} (all {original_count} were isolated)")
+            return 0
+
+        # 4. 필터링된 노드만 저장
+        for node in filtered_nodes:
             save_node_via_http(client, node)
 
-        # 4. 관계 저장
-        for rel in graph_doc.relationships:
+        # 5. 필터링된 관계만 저장
+        for rel in filtered_relationships:
             save_relationship_via_http(client, rel)
 
-        # 5. Note와 추출된 엔티티 연결
-        link_extracted_entities_to_note(client, note_id, graph_doc)
+        # 6. Note와 필터링된 엔티티 연결
+        # graph_doc 대신 filtered_nodes를 사용하여 연결
+        link_filtered_entities_to_note(client, note_id, filtered_nodes)
 
-        logger.info(f"✅ Successfully extracted {len(graph_doc.nodes)} nodes from {note_id}")
-        return len(graph_doc.nodes)
+        logger.info(f"✅ Successfully extracted {filtered_count}/{original_count} entities from {note_id} "
+                   f"(excluded {excluded_count} isolated entities)")
+        return filtered_count
 
     except Exception as e:
         logger.error(f"Error converting note to graph: {e}")
         raise e
+
+
+def link_filtered_entities_to_note(client, note_id: str, filtered_nodes: list):
+    """
+    필터링된 엔티티들을 Note 노드와 MENTIONS 관계로 연결
+    """
+    try:
+        for node in filtered_nodes:
+            # 정규화된 ID 사용
+            entity_id = normalize_entity_id(node.id)
+
+            cypher = f"""
+            MATCH (note:Note {{note_id: $note_id}})
+            MATCH (entity:{node.type} {{id: $entity_id}})
+            MERGE (note)-[m:MENTIONS]->(entity)
+            ON CREATE SET m.created_at = datetime(), m.last_seen = datetime()
+            ON MATCH SET m.last_seen = datetime()
+            """
+
+            params = {
+                "note_id": note_id,
+                "entity_id": entity_id
+            }
+
+            client.query(cypher, params)
+
+        logger.info(f"Linked {len(filtered_nodes)} filtered entities to note {note_id}")
+
+    except Exception as e:
+        logger.error(f"Error linking entities to note: {e}")
 
 
 def save_node_via_http(client, node):

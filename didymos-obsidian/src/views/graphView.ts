@@ -104,6 +104,26 @@ export class DidymosGraphView extends ItemView {
       await this.syncAllNotes(syncBtn);
     });
 
+    // 🔴 Reset Entities 버튼 (MVP 개발용)
+    const resetBtn = controls.createEl("button", {
+      text: "🔴 Reset Entities",
+      cls: "didymos-sync-btn didymos-reset-btn"
+    });
+    resetBtn.style.backgroundColor = "#dc3545";
+    resetBtn.style.color = "white";
+
+    resetBtn.addEventListener("click", async () => {
+      const confirmed = confirm(
+        "⚠️ 모든 엔티티(Topic, Project, Task, Person)를 삭제합니다.\n" +
+        "Note 노드는 유지됩니다.\n\n" +
+        "삭제 후 'Sync All Notes'를 실행하여 새로운 Graph-based Entity Resolution 로직으로 재추출하세요.\n\n" +
+        "계속하시겠습니까?"
+      );
+      if (!confirmed) return;
+
+      await this.resetEntities(resetBtn);
+    });
+
     // 클러스터링 옵션 (Vault 모드)
     const clusteringControls = controls.createEl("div", { cls: "didymos-clustering-controls" });
     clusteringControls.createEl("span", { text: "Clustering" });
@@ -443,6 +463,46 @@ export class DidymosGraphView extends ItemView {
   }
 
   /**
+   * 🔴 엔티티 완전 초기화 (MVP 개발용)
+   */
+  async resetEntities(button: HTMLElement) {
+    const originalText = button.textContent || "";
+
+    try {
+      button.textContent = "🔴 Resetting...";
+      button.setAttribute("disabled", "true");
+
+      const result = await this.api.resetVaultEntities(this.settings.vaultId);
+
+      button.textContent = `✅ Reset: ${result.deleted_entities} entities deleted`;
+
+      // lastBulkSyncTime을 0으로 리셋하여 다음 Sync All에서 모든 노트 재처리
+      this.settings.lastBulkSyncTime = 0;
+      await (this.plugin as any).saveSettings();
+
+      setTimeout(() => {
+        button.textContent = originalText;
+        button.removeAttribute("disabled");
+      }, 3000);
+
+      // Vault 모드면 그래프 다시 렌더링
+      if (this.viewMode === "vault") {
+        this.clusterForceRecompute = true;
+        await this.renderVaultGraph();
+      }
+
+    } catch (error: any) {
+      button.textContent = `❌ Reset failed`;
+      console.error("Reset error:", error);
+
+      setTimeout(() => {
+        button.textContent = originalText;
+        button.removeAttribute("disabled");
+      }, 3000);
+    }
+  }
+
+  /**
    * 그래프 크기에 따라 자동으로 최적의 hops 결정
    */
   private calculateAutoHops(nodeCount: number): number {
@@ -601,7 +661,7 @@ export class DidymosGraphView extends ItemView {
           label: edge.relation_type,
           arrows: { to: { enabled: true, scaleFactor: 0.4 } },
           color: { color: '#888888', highlight: '#333333' },
-          width: Math.max(1, edge.weight * 0.5),  // 얇은 선 (기존 * 2 → * 0.5)
+          width: Math.min(5, Math.max(1.5, Math.log2(edge.weight + 1) * 1.5)),  // 로그 스케일 (1.5~5px)
           font: {
             size: 11,
             color: '#555555',

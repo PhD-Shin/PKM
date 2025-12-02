@@ -137,18 +137,36 @@ Didymos는 Obsidian 사용자에게 단순한 유사도 검색을 넘어 **의�
 
 ### 3.1 핵심 기능 (Must Have)
 
-#### ✅ 자동 온톨로지 구축
+#### ✅ 자동 온톨로지 구축 (Graph-based Entity Resolution)
+
+**핵심 원리**: 단순 키워드 빈도가 아닌 **의미론적 관계**를 기반으로 대표 엔티티 추출
+
 ```python
-# 노트에서 자동 추출
-entities = {
-    "topics": ["Machine Learning", "Neural Networks"],
-    "projects": ["PhD Thesis"],
-    "tasks": ["Write Chapter 3"],
-    "persons": ["Prof. Smith"]
+# 2단계 엔티티 추출 파이프라인
+# Stage 1: LLM이 엔티티 후보 + 관계 동시 추출
+candidates = {
+    "entities": ["서울대학교", "Transformer", "Attention Mechanism"],
+    "relations": [
+        ("Transformer", "PART_OF", "Attention Mechanism"),
+        # "서울대학교"는 관계 없음 → 단순 언급
+    ]
 }
 
-# Neo4j 그래프 저장
-(:Note)-[:MENTIONS]->(:Topic)
+# Stage 2: 관계가 있는 엔티티만 저장 (Graph-based Filtering)
+filtered_entities = ["Transformer", "Attention Mechanism"]
+# "서울대학교"는 관계가 없으므로 제외 → 클러스터 품질 향상
+```
+
+**왜 이 방식인가?**
+- 문제: "서울대학교"가 1494개 노트에 언급 → 의미 없는 클러스터 형성
+- 해결: 관계(RELATED_TO, PART_OF)가 있는 엔티티만이 진정한 "대표 개념"
+- 영감: Palantir Ontology의 관계 중심 지식 모델링
+
+```
+# Neo4j 저장 시 필터링 적용
+Stage 1: LLM 추출 → candidates (entities + relations)
+Stage 2: relation이 있는 entity만 → Neo4j MERGE
+(:Note)-[:MENTIONS]->(:Topic)  # 관계가 있는 엔티티만
 (:Note)-[:PART_OF]->(:Project)
 (:Note)-[:CONTAINS]->(:Task)
 ```

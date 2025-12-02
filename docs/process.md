@@ -76,6 +76,13 @@ FastAPI /notes/sync
   ↓
 LangChain LLMGraphTransformer
   ↓
+┌─────────────────────────────────────────┐
+│ Graph-based Entity Resolution (2단계)  │
+│ Stage 1: 엔티티 후보 + 관계 추출        │
+│ Stage 2: 관계 있는 엔티티만 필터링      │
+│ (고립 엔티티 제외 → 클러스터 품질 ↑)   │
+└─────────────────────────────────────────┘
+  ↓
 Neo4j 저장 (Note, Topic, Project, Task)
   ↓
 클러스터 캐시 무효화
@@ -147,13 +154,18 @@ vis-network 시각화
 - [x] Settings / API Client / Main Plugin 구현
 - [x] 노트 저장 시 자동 동기화 및 알림
 
-### Phase 3: AI 온톨로지 추출 (Text2Graph)
+### Phase 3: AI 온톨로지 추출 (Text2Graph + Graph-based Entity Resolution)
 **예상 시간**: 2~3시간 | [📖 상세 가이드](./phases/phase-3-ai.md)
 
 - [x] **LangChain `LLMGraphTransformer` 도입**
 - [x] `allowed_nodes` (Topic, Project, Task, Person) 설정
 - [x] `process_note_to_graph` 서비스 구현
 - [x] Note 노드와 추출된 엔티티 연결 로직
+- [x] **Graph-based Entity Resolution (2단계 추출)** ✅ 2025-12-02
+  - Stage 1: LLM이 엔티티 후보 + 관계(RELATED_TO, PART_OF) 동시 추출
+  - Stage 2: 관계가 있는 엔티티만 Neo4j에 저장 (고립 엔티티 필터링)
+  - 효과: "서울대학교" 같은 단순 언급 키워드 제외 → 클러스터 품질 향상
+  - 영감: Palantir Ontology 관계 중심 모델링
 
 ### Phase 4: Context Panel (Hybrid Search)
 **예상 시간**: 4~5시간 | [📖 Backend](./phases/phase-4-context-backend.md) | [📖 Frontend](./phases/phase-4-context-frontend.md)

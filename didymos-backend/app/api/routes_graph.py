@@ -359,6 +359,84 @@ async def invalidate_clusters(
         )
 
 
+@router.post("/vault/reset-entities")
+async def reset_vault_entities(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+):
+    """
+    🔴 Vault 엔티티 완전 초기화 (MVP 개발용)
+
+    - 모든 Topic, Project, Task, Person 엔티티 삭제
+    - MENTIONS 관계 삭제
+    - 클러스터 캐시 무효화
+    - Note 노드는 유지
+
+    ⚠️ 이 작업은 되돌릴 수 없습니다!
+    """
+    try:
+        # 1. Vault에 연결된 엔티티와 관계 삭제
+        cypher_delete_entities = """
+        MATCH (v:Vault {id: $vault_id})-[:HAS_NOTE]->(n:Note)-[m:MENTIONS]->(e)
+        WHERE e:Topic OR e:Project OR e:Task OR e:Person
+        DELETE m
+        WITH DISTINCT e
+        WHERE NOT (e)--()
+        DELETE e
+        RETURN count(e) as deleted_entities
+        """
+
+        result1 = client.query(cypher_delete_entities, {"vault_id": vault_id})
+        deleted_entities = result1[0]["deleted_entities"] if result1 else 0
+
+        # 2. 고아 엔티티 정리 (다른 vault에서도 사용되지 않는 경우)
+        cypher_cleanup_orphans = """
+        MATCH (e)
+        WHERE (e:Topic OR e:Project OR e:Task OR e:Person)
+          AND NOT (e)--()
+        DELETE e
+        RETURN count(e) as orphans_deleted
+        """
+
+        result2 = client.query(cypher_cleanup_orphans, {})
+        orphans_deleted = result2[0]["orphans_deleted"] if result2 else 0
+
+        # 3. 엔티티 간 관계도 정리
+        cypher_delete_entity_relations = """
+        MATCH (v:Vault {id: $vault_id})-[:HAS_NOTE]->(n:Note)
+        WITH COLLECT(n.note_id) as note_ids
+        MATCH (e1)-[r:RELATED_TO|PART_OF]->(e2)
+        WHERE (e1:Topic OR e1:Project OR e1:Task OR e1:Person)
+          AND (e2:Topic OR e2:Project OR e2:Task OR e2:Person)
+        DELETE r
+        RETURN count(r) as relations_deleted
+        """
+
+        result3 = client.query(cypher_delete_entity_relations, {"vault_id": vault_id})
+        relations_deleted = result3[0]["relations_deleted"] if result3 else 0
+
+        # 4. 클러스터 캐시 무효화
+        invalidate_cluster_cache(client, vault_id)
+
+        logger.info(f"🔴 Reset entities for vault {vault_id}: {deleted_entities} entities, {orphans_deleted} orphans, {relations_deleted} relations")
+
+        return {
+            "status": "success",
+            "message": "Vault entities reset complete",
+            "deleted_entities": deleted_entities,
+            "orphans_deleted": orphans_deleted,
+            "relations_deleted": relations_deleted
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to reset vault entities: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to reset entities: {str(e)}"
+        )
+
+
 @router.get("/vault/folders")
 async def get_vault_folders(
     vault_id: str = Query(..., description="Vault ID"),

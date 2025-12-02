@@ -113,6 +113,12 @@ export interface WeeklyReviewRecord {
   summary: any;
 }
 
+export interface HubEntity {
+  id: string;
+  name: string;
+  centrality: number;  // 0~1, 그래프 중심성 점수
+}
+
 export interface ClusterNode {
   id: string;
   name: string;
@@ -130,6 +136,7 @@ export interface ClusterNode {
   clustering_method: string;
   is_manual: boolean;
   contains_types: Record<string, number>;
+  hub_entities?: HubEntity[];  // 그래프 중심성 기반 허브 엔티티
 }
 
 export interface ClusteredGraphData {
@@ -330,5 +337,21 @@ export class DidymosAPI {
 
     const response = await fetch(url.toString(), { method: "POST" });
     if (!response.ok) throw new Error(`API error: ${response.status}`);
+  }
+
+  async resetVaultEntities(vaultId: string): Promise<{
+    status: string;
+    message: string;
+    deleted_entities: number;
+    orphans_deleted: number;
+    relations_deleted: number;
+  }> {
+    const url = new URL(this.baseUrl("/graph/vault/reset-entities"));
+    url.searchParams.set("vault_id", vaultId);
+    url.searchParams.set("user_token", this.settings.userToken);
+
+    const response = await fetch(url.toString(), { method: "POST" });
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
   }
 }

@@ -6,6 +6,13 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 
 
+class HubEntity(BaseModel):
+    """클러스터 허브 엔티티 (그래프 중심성 기반)"""
+    id: str
+    name: str
+    centrality: float = Field(..., ge=0.0, le=1.0, description="중심성 점수 (0~1)")
+
+
 class ClusterNode(BaseModel):
     """클러스터 노드"""
     id: str
@@ -27,6 +34,10 @@ class ClusterNode(BaseModel):
     contains_types: Dict[str, int] = Field(
         default_factory=dict,
         description="포함된 노드 타입별 카운트 (note: 10, topic: 3, ...)"
+    )
+    hub_entities: List[HubEntity] = Field(
+        default_factory=list,
+        description="그래프 중심성 기반 허브 엔티티 (클러스터의 핵심 개념)"
     )
 
 
