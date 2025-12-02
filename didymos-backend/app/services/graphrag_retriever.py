@@ -187,7 +187,7 @@ class GraphRAGRetrieverService:
         if self._vector_retriever is None:
             self._vector_retriever = VectorRetriever(
                 driver=self.driver,
-                index_name="note_embedding_index",  # vector_service.py에서 생성하는 인덱스
+                index_name="note_embeddings",  # vector_service.py에서 생성하는 인덱스
                 embedder=self.embedder,
                 return_properties=["note_id", "title", "path", "content", "updated_at"]
             )
@@ -199,7 +199,7 @@ class GraphRAGRetrieverService:
         if self._vector_cypher_retriever is None:
             self._vector_cypher_retriever = VectorCypherRetriever(
                 driver=self.driver,
-                index_name="note_embedding_index",
+                index_name="note_embeddings",
                 embedder=self.embedder,
                 retrieval_query=NOTE_RETRIEVAL_QUERY
             )
