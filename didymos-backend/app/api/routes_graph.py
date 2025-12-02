@@ -479,3 +479,56 @@ async def get_vault_folders(
             status_code=500,
             detail=f"Failed to get folders: {str(e)}"
         )
+
+
+@router.get("/debug/stats")
+async def get_debug_stats(
+    vault_id: str = Query(..., description="Vault ID"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+):
+    """
+    디버그용: Neo4j 데이터 통계 확인
+    """
+    try:
+        # 1. Vault 존재 확인
+        vault_check = client.query(
+            "MATCH (v:Vault {id: $vault_id}) RETURN v.id AS id",
+            {"vault_id": vault_id}
+        )
+
+        # 2. 전체 Note 수
+        total_notes = client.query(
+            "MATCH (n:Note) RETURN count(n) AS count",
+            {}
+        )
+
+        # 3. Vault에 연결된 Note 수
+        vault_notes = client.query(
+            "MATCH (v:Vault {id: $vault_id})-[:HAS_NOTE]->(n:Note) RETURN count(n) AS count",
+            {"vault_id": vault_id}
+        )
+
+        # 4. 임베딩이 있는 Note 수
+        notes_with_embedding = client.query(
+            "MATCH (v:Vault {id: $vault_id})-[:HAS_NOTE]->(n:Note) WHERE n.embedding IS NOT NULL RETURN count(n) AS count",
+            {"vault_id": vault_id}
+        )
+
+        # 5. 전체 Vault 목록
+        all_vaults = client.query(
+            "MATCH (v:Vault) RETURN v.id AS id LIMIT 10",
+            {}
+        )
+
+        return {
+            "vault_id_queried": vault_id,
+            "vault_exists": len(vault_check or []) > 0,
+            "all_vaults": [v["id"] for v in (all_vaults or [])],
+            "total_notes_in_db": (total_notes[0]["count"] if total_notes else 0),
+            "notes_in_vault": (vault_notes[0]["count"] if vault_notes else 0),
+            "notes_with_embedding": (notes_with_embedding[0]["count"] if notes_with_embedding else 0),
+        }
+
+    except Exception as e:
+        logger.error(f"Debug stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

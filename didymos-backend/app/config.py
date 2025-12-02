@@ -26,9 +26,10 @@ class Settings(BaseSettings):
     openai_api_key: str
 
     # Graphiti Temporal KG
-    # Graphiti is now the default for temporal knowledge graph
-    # Set to False only for legacy LLMGraphTransformer fallback
-    use_graphiti: bool = True
+    # Graphiti uses its own schema (EntityNode, Edge) which is incompatible
+    # with our PKM ontology (Topic, Project, Task, Person)
+    # Disabled until cluster_service is updated to support Graphiti schema
+    use_graphiti: bool = False
 
     # CORS
     cors_origins: str = '["*"]'

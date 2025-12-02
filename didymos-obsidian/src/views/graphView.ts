@@ -33,7 +33,10 @@ export class DidymosGraphView extends ItemView {
   availableFolders: Array<{ folder: string; note_count: number }> = [];  // 사용 가능한 폴더 목록
   folderSelectEl: HTMLElement | null = null;
   staleKnowledgePanelEl: HTMLElement | null = null;  // 잊혀진 지식 패널
-  staleKnowledgeData: StaleKnowledge[] = [];  // 잊혀진 지식 데이터
+  staleKnowledgeData: StaleKnowledge[] = [];
+  // Sync cancellation
+  syncAbortController: AbortController | null = null;
+  isSyncing: boolean = false;
 
   constructor(leaf: WorkspaceLeaf, settings: DidymosSettings, plugin: Plugin) {
     super(leaf);
@@ -96,14 +99,20 @@ export class DidymosGraphView extends ItemView {
       await this.renderVaultGraph();
     });
 
-    // Sync All Notes 버튼
+    // Sync All Notes 버튼 (Cancel 기능 포함)
     const syncBtn = controls.createEl("button", {
       text: "🔄 Sync All Notes",
       cls: "didymos-sync-btn"
     });
 
     syncBtn.addEventListener("click", async () => {
-      await this.syncAllNotes(syncBtn);
+      if (this.isSyncing) {
+        // Cancel 모드: 진행 중인 sync 취소
+        this.cancelSync(syncBtn);
+      } else {
+        // Sync 모드: sync 시작
+        await this.syncAllNotes(syncBtn);
+      }
     });
 
     // 🔴 Reset Entities 버튼 (MVP 개발용)
@@ -199,12 +208,33 @@ export class DidymosGraphView extends ItemView {
     );
   }
 
+  /**
+   * Sync 취소
+   */
+  cancelSync(button: HTMLElement) {
+    if (this.syncAbortController) {
+      this.syncAbortController.abort();
+      this.syncAbortController = null;
+    }
+    this.isSyncing = false;
+    button.textContent = "🔄 Sync All Notes";
+    button.removeClass("syncing");
+    console.log("⛔ Sync cancelled by user");
+  }
+
   async syncAllNotes(button: HTMLElement) {
-    const originalText = button.textContent || "";
+    // 이미 syncing 중이면 무시
+    if (this.isSyncing) {
+      return;
+    }
+
+    // AbortController 생성
+    this.syncAbortController = new AbortController();
+    this.isSyncing = true;
 
     try {
-      button.textContent = "⏳ Syncing...";
-      button.setAttribute("disabled", "true");
+      button.textContent = "⛔ Cancel Sync";
+      button.addClass("syncing");
 
       // Vault의 모든 .md 파일 가져오기
       const allMarkdownFiles = this.app.vault.getMarkdownFiles();
@@ -218,9 +248,11 @@ export class DidymosGraphView extends ItemView {
 
       if (totalFiles === 0) {
         button.textContent = `✅ Already up to date (${skippedFiles} files)`;
+        this.isSyncing = false;
+        this.syncAbortController = null;
         setTimeout(() => {
-          button.textContent = originalText;
-          button.removeAttribute("disabled");
+          button.textContent = "🔄 Sync All Notes";
+          button.removeClass("syncing");
         }, 3000);
         return;
       }
@@ -229,11 +261,14 @@ export class DidymosGraphView extends ItemView {
       let succeeded = 0;
       let failed = 0;
 
-      // 순차 처리 (1개씩, Railway 502 타임아웃 방지)
-      // 각 노트의 LLM 엔티티 추출 + 임베딩 생성에 시간이 걸림
-      const noteDelayMs = 500; // 각 노트 처리 후 0.5초 대기
-
+      // 순차 처리 (1개씩) - Railway 서버 안정성 보장
       for (const file of markdownFiles) {
+        // 취소 확인
+        if (this.syncAbortController?.signal.aborted) {
+          console.log(`⛔ Sync aborted at ${processed}/${totalFiles}`);
+          break;
+        }
+
         try {
           const content = await this.app.vault.read(file);
           const noteData = {
@@ -246,53 +281,54 @@ export class DidymosGraphView extends ItemView {
             updated_at: new Date(file.stat.mtime).toISOString(),
           };
 
-          // 노트 저장 API 호출 (타임아웃 60초)
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 60000);
-
-          try {
-            const response = await fetch(
-              `${this.settings.apiEndpoint}/notes/sync`,
-              {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  user_token: this.settings.userToken,
-                  vault_id: this.settings.vaultId,
-                  note: noteData,
-                  privacy_mode: "full",
-                }),
-                signal: controller.signal,
-              }
-            );
-            clearTimeout(timeoutId);
-
-            if (response.ok) {
-              succeeded++;
-            } else {
-              failed++;
-              console.error(`Failed to sync ${file.path}: ${response.status}`);
+          const response = await fetch(
+            `${this.settings.apiEndpoint}/notes/sync`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                user_token: this.settings.userToken,
+                vault_id: this.settings.vaultId,
+                note: noteData,
+                privacy_mode: "full",
+              }),
+              signal: this.syncAbortController?.signal,
             }
-          } catch (fetchError: any) {
-            clearTimeout(timeoutId);
-            if (fetchError.name === 'AbortError') {
-              console.error(`Timeout syncing ${file.path}`);
-            }
-            throw fetchError;
+          );
+
+          if (response.ok) {
+            succeeded++;
+          } else {
+            failed++;
+            console.error(`Failed to sync ${file.path}: ${response.status}`);
           }
-        } catch (error) {
+        } catch (error: any) {
+          // AbortError는 무시 (사용자가 취소함)
+          if (error.name === "AbortError") {
+            console.log(`⛔ Fetch aborted for ${file.path}`);
+            break;
+          }
           failed++;
           console.error(`Error syncing ${file.path}:`, error);
-        } finally {
-          processed++;
-          // 10개 단위로만 UI 업데이트
-          if (processed % 10 === 0 || processed === totalFiles) {
-            button.textContent = `⏳ Syncing... ${processed}/${totalFiles} (${succeeded} ok, ${failed} fail)`;
-          }
         }
 
-        // 다음 노트 처리 전 짧은 대기
-        await new Promise(resolve => setTimeout(resolve, noteDelayMs));
+        processed++;
+        if (processed % 10 === 0 || processed === totalFiles) {
+          // 취소 상태가 아닐 때만 버튼 텍스트 업데이트
+          if (!this.syncAbortController?.signal.aborted) {
+            button.textContent = `⛔ Cancel (${processed}/${totalFiles})`;
+          }
+        }
+      }
+
+      // 취소된 경우
+      if (this.syncAbortController?.signal.aborted) {
+        button.textContent = `⚠️ Cancelled (${succeeded} synced)`;
+        setTimeout(() => {
+          button.textContent = "🔄 Sync All Notes";
+          button.removeClass("syncing");
+        }, 3000);
+        return;
       }
 
       // 마지막 sync 시간 업데이트
@@ -305,8 +341,8 @@ export class DidymosGraphView extends ItemView {
         : `✅ Synced ${succeeded}/${totalFiles}`;
       button.textContent = statusMsg;
       setTimeout(() => {
-        button.textContent = originalText;
-        button.removeAttribute("disabled");
+        button.textContent = "🔄 Sync All Notes";
+        button.removeClass("syncing");
       }, 3000);
 
       // Vault 모드면 그래프 다시 렌더링
@@ -315,13 +351,19 @@ export class DidymosGraphView extends ItemView {
       }
 
     } catch (error: any) {
-      button.textContent = `❌ Sync failed`;
-      console.error("Sync error:", error);
+      // AbortError는 무시
+      if (error.name !== "AbortError") {
+        button.textContent = `❌ Sync failed`;
+        console.error("Sync error:", error);
+      }
 
       setTimeout(() => {
-        button.textContent = originalText;
-        button.removeAttribute("disabled");
+        button.textContent = "🔄 Sync All Notes";
+        button.removeClass("syncing");
       }, 3000);
+    } finally {
+      this.isSyncing = false;
+      this.syncAbortController = null;
     }
   }
 
