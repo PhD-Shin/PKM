@@ -1788,3 +1788,219 @@
   color: var(--text-error);
 }
 
+
+/* ========================================
+   Stale Knowledge Panel (잊혀진 지식)
+   ======================================== */
+
+.didymos-stale-panel {
+  position: absolute;
+  top: 120px;
+  right: 20px;
+  width: 380px;
+  max-height: 70%;
+  background-color: var(--background-primary);
+  border: 2px solid #f39c12;
+  border-radius: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  z-index: 100;
+  overflow-y: auto;
+  animation: slideInRight 0.3s ease-out;
+}
+
+.didymos-stale-panel__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 2px solid var(--background-modifier-border);
+  background-color: #f39c12;
+  color: white;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.didymos-stale-panel__header h3 {
+  margin: 0;
+  font-size: 1.1em;
+}
+
+.didymos-stale-panel__header button {
+  background: transparent;
+  border: none;
+  color: white;
+  font-size: 1.2em;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+}
+
+.didymos-stale-panel__header button:hover {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+
+.didymos-stale-panel__filters {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background-color: var(--background-secondary);
+  flex-wrap: wrap;
+}
+
+.didymos-stale-panel__filters button {
+  padding: 6px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background-color: var(--background-primary);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.85em;
+  transition: all 0.2s;
+}
+
+.didymos-stale-panel__filters button:hover {
+  background-color: var(--background-modifier-hover);
+}
+
+.didymos-stale-panel__filters button.active {
+  background-color: #f39c12;
+  color: white;
+  border-color: #f39c12;
+}
+
+.didymos-mark-all-btn {
+  margin-left: auto !important;
+  background-color: #27ae60 !important;
+  color: white !important;
+  border-color: #27ae60 !important;
+}
+
+.didymos-mark-all-btn:hover {
+  background-color: #219a52 !important;
+}
+
+.didymos-stale-panel__content {
+  padding: 12px 16px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.didymos-stale-loading,
+.didymos-stale-empty,
+.didymos-stale-error,
+.didymos-stale-message {
+  text-align: center;
+  padding: 16px;
+  font-size: 0.9em;
+  color: var(--text-muted);
+}
+
+.didymos-stale-message {
+  text-align: left;
+  color: var(--text-accent);
+  background-color: var(--background-secondary);
+  border-radius: 6px;
+  margin-bottom: 12px;
+}
+
+.didymos-stale-empty {
+  color: #27ae60;
+  font-size: 1em;
+}
+
+.didymos-stale-error {
+  color: var(--text-error);
+}
+
+.didymos-stale-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.didymos-stale-item {
+  padding: 12px;
+  margin-bottom: 8px;
+  background-color: var(--background-secondary);
+  border-radius: 8px;
+  border-left: 4px solid var(--text-muted);
+  transition: all 0.3s;
+}
+
+.didymos-stale-item.priority-high {
+  border-left-color: #e74c3c;
+}
+
+.didymos-stale-item.priority-medium {
+  border-left-color: #f39c12;
+}
+
+.didymos-stale-item:hover {
+  background-color: var(--background-modifier-hover);
+  transform: translateX(4px);
+}
+
+.didymos-stale-item.reviewed {
+  opacity: 0;
+  transform: translateX(50px);
+  transition: all 0.3s ease-out;
+}
+
+.didymos-stale-item__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.didymos-stale-item__name {
+  font-weight: 600;
+  color: var(--text-normal);
+  font-size: 0.95em;
+}
+
+.didymos-stale-item__days {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 0.75em;
+  font-weight: bold;
+}
+
+.didymos-stale-item__days.high {
+  background-color: #e74c3c;
+  color: white;
+}
+
+.didymos-stale-item__days.medium {
+  background-color: #f39c12;
+  color: white;
+}
+
+.didymos-stale-item__summary {
+  margin: 8px 0;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.didymos-stale-item__review-btn {
+  display: block;
+  width: 100%;
+  padding: 8px;
+  margin-top: 8px;
+  background-color: #27ae60;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85em;
+  font-weight: 500;
+  transition: background-color 0.2s;
+}
+
+.didymos-stale-item__review-btn:hover {
+  background-color: #219a52;
+}

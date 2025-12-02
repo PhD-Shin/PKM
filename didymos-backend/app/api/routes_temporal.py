@@ -34,6 +34,11 @@ class EvolutionResponse(BaseModel):
     total_changes: int
 
 
+class MarkReviewedRequest(BaseModel):
+    """지식 확인 요청"""
+    uuid: str
+
+
 @router.post("/search")
 async def temporal_search(request: TemporalSearchRequest):
     """
@@ -198,21 +203,28 @@ async def get_stale_knowledge(
         cutoff_date = datetime.now() - timedelta(days=days)
 
         # Graphiti Entity 노드에서 오래된 것 조회
-        # created_at 또는 last_accessed 기준
+        # last_accessed가 있으면 그 기준, 없으면 created_at 기준
         cypher = """
         MATCH (e:Entity)
         WHERE e.created_at IS NOT NULL
-          AND datetime(e.created_at) < datetime($cutoff_date)
         WITH e,
-             duration.inDays(datetime(e.created_at), datetime()).days AS days_old,
+             CASE
+               WHEN e.last_accessed IS NOT NULL THEN e.last_accessed
+               ELSE e.created_at
+             END AS reference_date
+        WHERE datetime(reference_date) < datetime($cutoff_date)
+        WITH e,
+             reference_date,
+             duration.inDays(datetime(reference_date), datetime()).days AS days_since_access,
              e.summary AS summary
-        ORDER BY days_old DESC
+        ORDER BY days_since_access DESC
         LIMIT $limit
         RETURN e.uuid AS uuid,
                e.name AS name,
                e.summary AS summary,
                e.created_at AS created_at,
-               days_old
+               e.last_accessed AS last_accessed,
+               days_since_access
         """
 
         results = client.query(cypher, {
@@ -222,13 +234,15 @@ async def get_stale_knowledge(
 
         stale_entities = []
         for record in results:
+            days = record.get("days_since_access", 0)
             stale_entities.append({
                 "uuid": record.get("uuid"),
                 "name": record.get("name"),
                 "summary": record.get("summary"),
                 "created_at": record.get("created_at"),
-                "days_old": record.get("days_old"),
-                "priority": "high" if record.get("days_old", 0) > 60 else "medium"
+                "last_accessed": record.get("last_accessed"),
+                "days_since_access": days,
+                "priority": "high" if days > 60 else "medium"
             })
 
         return {
@@ -323,4 +337,104 @@ async def get_recent_knowledge_changes(
 
     except Exception as e:
         logger.error(f"Recent insights query failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/insights/mark-reviewed")
+async def mark_knowledge_reviewed(request: MarkReviewedRequest):
+    """
+    지식 확인 완료 표시
+
+    사용자가 잊혀진 지식을 확인하면 last_accessed를 업데이트합니다.
+    이렇게 하면 다음 조회에서 제외되고, 30일 후 다시 나타납니다.
+
+    Args:
+        uuid: 엔티티 UUID
+
+    Returns:
+        업데이트 결과
+    """
+    if not settings.use_graphiti:
+        raise HTTPException(
+            status_code=400,
+            detail="Graphiti is not enabled. Set USE_GRAPHITI=true in environment."
+        )
+
+    try:
+        from app.db.neo4j import get_neo4j_client
+
+        client = get_neo4j_client()
+
+        # last_accessed 업데이트
+        cypher = """
+        MATCH (e:Entity {uuid: $uuid})
+        SET e.last_accessed = datetime()
+        RETURN e.uuid AS uuid, e.name AS name, e.last_accessed AS last_accessed
+        """
+
+        results = client.query(cypher, {"uuid": request.uuid})
+
+        if not results:
+            raise HTTPException(status_code=404, detail="Entity not found")
+
+        record = results[0]
+        return {
+            "status": "success",
+            "message": "지식이 복습되었습니다. 30일 후 다시 알려드릴게요!",
+            "entity": {
+                "uuid": record.get("uuid"),
+                "name": record.get("name"),
+                "last_accessed": record.get("last_accessed")
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Mark reviewed failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/insights/mark-reviewed-batch")
+async def mark_knowledge_reviewed_batch(uuids: list[str]):
+    """
+    여러 지식 일괄 확인 완료
+
+    Args:
+        uuids: 엔티티 UUID 목록
+
+    Returns:
+        일괄 업데이트 결과
+    """
+    if not settings.use_graphiti:
+        raise HTTPException(
+            status_code=400,
+            detail="Graphiti is not enabled. Set USE_GRAPHITI=true in environment."
+        )
+
+    try:
+        from app.db.neo4j import get_neo4j_client
+
+        client = get_neo4j_client()
+
+        # 일괄 업데이트
+        cypher = """
+        UNWIND $uuids AS uuid
+        MATCH (e:Entity {uuid: uuid})
+        SET e.last_accessed = datetime()
+        RETURN count(e) AS updated_count
+        """
+
+        results = client.query(cypher, {"uuids": uuids})
+        updated_count = results[0].get("updated_count", 0) if results else 0
+
+        return {
+            "status": "success",
+            "message": f"{updated_count}개의 지식이 복습되었습니다.",
+            "updated_count": updated_count,
+            "requested_count": len(uuids)
+        }
+
+    except Exception as e:
+        logger.error(f"Batch mark reviewed failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

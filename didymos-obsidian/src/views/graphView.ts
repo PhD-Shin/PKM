@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, Plugin } from "obsidian";
 import { Network } from "vis-network";
 import { DidymosSettings } from "../settings";
-import { DidymosAPI, GraphData, ClusteredGraphData } from "../api/client";
+import { DidymosAPI, GraphData, ClusteredGraphData, StaleKnowledge } from "../api/client";
 
 export const DIDYMOS_GRAPH_VIEW_TYPE = "didymos-graph-view";
 
@@ -32,6 +32,8 @@ export class DidymosGraphView extends ItemView {
   selectedFolders: string[] = [];  // 선택된 폴더 목록
   availableFolders: Array<{ folder: string; note_count: number }> = [];  // 사용 가능한 폴더 목록
   folderSelectEl: HTMLElement | null = null;
+  staleKnowledgePanelEl: HTMLElement | null = null;  // 잊혀진 지식 패널
+  staleKnowledgeData: StaleKnowledge[] = [];  // 잊혀진 지식 데이터
 
   constructor(leaf: WorkspaceLeaf, settings: DidymosSettings, plugin: Plugin) {
     super(leaf);
@@ -122,6 +124,18 @@ export class DidymosGraphView extends ItemView {
       if (!confirmed) return;
 
       await this.resetEntities(resetBtn);
+    });
+
+    // 💡 잊혀진 지식 버튼
+    const staleBtn = controls.createEl("button", {
+      text: "💡 Forgotten",
+      cls: "didymos-sync-btn didymos-stale-btn"
+    });
+    staleBtn.style.backgroundColor = "#f39c12";
+    staleBtn.style.color = "white";
+
+    staleBtn.addEventListener("click", async () => {
+      await this.toggleStaleKnowledgePanel();
     });
 
     // LLM Summary 토글 (비용 제어)
@@ -1216,5 +1230,212 @@ export class DidymosGraphView extends ItemView {
     // Drilldown 힌트
     const hint = detail.createEl("div", { cls: "didymos-cluster-detail__hint" });
     hint.createSpan({ text: "Tip: Zoom In to expand clusters, or switch to Note mode for per-note graph." });
+  }
+
+  // ============================================
+  // 잊혀진 지식 (Stale Knowledge) 기능
+  // ============================================
+
+  async toggleStaleKnowledgePanel() {
+    const container = this.containerEl.children[1] as HTMLElement;
+    if (!container) return;
+
+    // 패널이 이미 있으면 토글
+    if (this.staleKnowledgePanelEl) {
+      this.staleKnowledgePanelEl.remove();
+      this.staleKnowledgePanelEl = null;
+      return;
+    }
+
+    // 패널 생성
+    this.staleKnowledgePanelEl = container.createEl("div", {
+      cls: "didymos-stale-panel"
+    });
+
+    const panelHeader = this.staleKnowledgePanelEl.createEl("div", {
+      cls: "didymos-stale-panel__header"
+    });
+    panelHeader.createEl("h3", { text: "💡 잊혀진 지식" });
+
+    const closeBtn = panelHeader.createEl("button", { text: "✕" });
+    closeBtn.addEventListener("click", () => {
+      if (this.staleKnowledgePanelEl) {
+        this.staleKnowledgePanelEl.remove();
+        this.staleKnowledgePanelEl = null;
+      }
+    });
+
+    // 필터 버튼
+    const filterRow = this.staleKnowledgePanelEl.createEl("div", {
+      cls: "didymos-stale-panel__filters"
+    });
+
+    const btn30 = filterRow.createEl("button", { text: "30일+", cls: "active" });
+    const btn60 = filterRow.createEl("button", { text: "60일+" });
+
+    btn30.addEventListener("click", async () => {
+      btn30.addClass("active");
+      btn60.removeClass("active");
+      await this.loadStaleKnowledge(30);
+    });
+
+    btn60.addEventListener("click", async () => {
+      btn60.addClass("active");
+      btn30.removeClass("active");
+      await this.loadStaleKnowledge(60);
+    });
+
+    // 일괄 확인 버튼
+    const markAllBtn = filterRow.createEl("button", {
+      text: "✓ 모두 확인",
+      cls: "didymos-mark-all-btn"
+    });
+    markAllBtn.addEventListener("click", async () => {
+      await this.markAllReviewed();
+    });
+
+    // 콘텐츠 영역
+    const contentEl = this.staleKnowledgePanelEl.createEl("div", {
+      cls: "didymos-stale-panel__content"
+    });
+    contentEl.createEl("p", { text: "로딩 중...", cls: "didymos-stale-loading" });
+
+    // 데이터 로드
+    await this.loadStaleKnowledge(30);
+  }
+
+  async loadStaleKnowledge(days: number) {
+    if (!this.staleKnowledgePanelEl) return;
+
+    const contentEl = this.staleKnowledgePanelEl.querySelector(".didymos-stale-panel__content") as HTMLElement;
+    if (!contentEl) return;
+
+    contentEl.empty();
+    contentEl.createEl("p", { text: "로딩 중...", cls: "didymos-stale-loading" });
+
+    try {
+      const response = await this.api.fetchStaleKnowledge(days, 30);
+      this.staleKnowledgeData = response.stale_knowledge;
+
+      contentEl.empty();
+
+      if (this.staleKnowledgeData.length === 0) {
+        contentEl.createEl("p", {
+          text: `${days}일 이상 된 잊혀진 지식이 없습니다! 🎉`,
+          cls: "didymos-stale-empty"
+        });
+        return;
+      }
+
+      contentEl.createEl("p", {
+        text: response.message,
+        cls: "didymos-stale-message"
+      });
+
+      const list = contentEl.createEl("ul", { cls: "didymos-stale-list" });
+
+      for (const item of this.staleKnowledgeData) {
+        const li = list.createEl("li", {
+          cls: `didymos-stale-item priority-${item.priority}`
+        });
+
+        const header = li.createEl("div", { cls: "didymos-stale-item__header" });
+
+        const nameEl = header.createEl("span", {
+          text: item.name,
+          cls: "didymos-stale-item__name"
+        });
+
+        const daysEl = header.createEl("span", {
+          text: `${item.days_since_access}일`,
+          cls: `didymos-stale-item__days ${item.priority}`
+        });
+
+        if (item.summary) {
+          li.createEl("p", {
+            text: item.summary.length > 100 ? item.summary.slice(0, 100) + "..." : item.summary,
+            cls: "didymos-stale-item__summary"
+          });
+        }
+
+        // 확인 버튼
+        const reviewBtn = li.createEl("button", {
+          text: "✓ 확인",
+          cls: "didymos-stale-item__review-btn"
+        });
+        reviewBtn.addEventListener("click", async () => {
+          await this.markKnowledgeReviewed(item.uuid, li);
+        });
+      }
+
+    } catch (error) {
+      console.error("Failed to load stale knowledge:", error);
+      contentEl.empty();
+      contentEl.createEl("p", {
+        text: "잊혀진 지식을 불러오는데 실패했습니다.",
+        cls: "didymos-stale-error"
+      });
+    }
+  }
+
+  async markKnowledgeReviewed(uuid: string, listItem: HTMLElement) {
+    try {
+      await this.api.markKnowledgeReviewed(uuid);
+
+      // UI에서 항목 제거 (애니메이션)
+      listItem.addClass("reviewed");
+      setTimeout(() => {
+        listItem.remove();
+
+        // 데이터에서도 제거
+        this.staleKnowledgeData = this.staleKnowledgeData.filter(k => k.uuid !== uuid);
+
+        // 목록이 비었으면 메시지 표시
+        if (this.staleKnowledgeData.length === 0 && this.staleKnowledgePanelEl) {
+          const contentEl = this.staleKnowledgePanelEl.querySelector(".didymos-stale-panel__content") as HTMLElement;
+          if (contentEl) {
+            contentEl.empty();
+            contentEl.createEl("p", {
+              text: "모든 지식을 복습했습니다! 🎉",
+              cls: "didymos-stale-empty"
+            });
+          }
+        }
+      }, 300);
+
+    } catch (error) {
+      console.error("Failed to mark knowledge as reviewed:", error);
+    }
+  }
+
+  async markAllReviewed() {
+    if (this.staleKnowledgeData.length === 0) return;
+
+    const confirmed = confirm(
+      `${this.staleKnowledgeData.length}개의 지식을 모두 복습 완료로 표시하시겠습니까?`
+    );
+    if (!confirmed) return;
+
+    try {
+      const uuids = this.staleKnowledgeData.map(k => k.uuid);
+      await this.api.markKnowledgeReviewedBatch(uuids);
+
+      // UI 업데이트
+      if (this.staleKnowledgePanelEl) {
+        const contentEl = this.staleKnowledgePanelEl.querySelector(".didymos-stale-panel__content") as HTMLElement;
+        if (contentEl) {
+          contentEl.empty();
+          contentEl.createEl("p", {
+            text: "모든 지식을 복습했습니다! 🎉",
+            cls: "didymos-stale-empty"
+          });
+        }
+      }
+
+      this.staleKnowledgeData = [];
+
+    } catch (error) {
+      console.error("Failed to mark all as reviewed:", error);
+    }
   }
 }

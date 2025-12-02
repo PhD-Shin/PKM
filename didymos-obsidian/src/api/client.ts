@@ -119,6 +119,27 @@ export interface HubEntity {
   centrality: number;  // 0~1, 그래프 중심성 점수
 }
 
+export interface StaleKnowledge {
+  uuid: string;
+  name: string;
+  summary: string | null;
+  created_at: string;
+  last_accessed: string | null;
+  days_since_access: number;
+  priority: "high" | "medium";
+}
+
+export interface StaleKnowledgeResponse {
+  status: string;
+  criteria: {
+    min_days_old: number;
+    cutoff_date: string;
+  };
+  stale_knowledge: StaleKnowledge[];
+  total_count: number;
+  message: string;
+}
+
 export interface ClusterNode {
   id: string;
   name: string;
@@ -351,6 +372,49 @@ export class DidymosAPI {
     url.searchParams.set("user_token", this.settings.userToken);
 
     const response = await fetch(url.toString(), { method: "POST" });
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  // ============================================
+  // Temporal Knowledge Graph APIs
+  // ============================================
+
+  async fetchStaleKnowledge(days: number = 30, limit: number = 20): Promise<StaleKnowledgeResponse> {
+    const url = new URL(this.baseUrl("/temporal/insights/stale"));
+    url.searchParams.set("days", String(days));
+    url.searchParams.set("limit", String(limit));
+
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  async markKnowledgeReviewed(uuid: string): Promise<{
+    status: string;
+    message: string;
+    entity: { uuid: string; name: string; last_accessed: string };
+  }> {
+    const response = await fetch(this.baseUrl("/temporal/insights/mark-reviewed"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uuid }),
+    });
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  async markKnowledgeReviewedBatch(uuids: string[]): Promise<{
+    status: string;
+    message: string;
+    updated_count: number;
+    requested_count: number;
+  }> {
+    const response = await fetch(this.baseUrl("/temporal/insights/mark-reviewed-batch"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(uuids),
+    });
     if (!response.ok) throw new Error(`API error: ${response.status}`);
     return response.json();
   }
