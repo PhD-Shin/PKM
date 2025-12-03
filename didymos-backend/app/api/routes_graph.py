@@ -668,3 +668,144 @@ async def get_entity_node_stats() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Entity stats error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vault/entities")
+async def get_vault_entity_graph(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    limit: int = Query(200, description="Maximum entities to return", ge=10, le=1000),
+    min_connections: int = Query(1, description="Minimum RELATES_TO connections", ge=0),
+    include_notes: bool = Query(False, description="Include connected notes")
+) -> Dict[str, Any]:
+    """
+    Entity Graph 시각화를 위한 데이터 반환
+
+    클러스터 대신 Entity 노드와 RELATES_TO 관계를 직접 반환하여
+    진정한 Knowledge Graph 시각화를 지원합니다.
+
+    - Entity = 노드 (타입별 색상: Topic=파랑, Project=초록, Person=주황, Task=빨강)
+    - RELATES_TO = 엣지 (의미론적 연결)
+    """
+    try:
+        client = get_neo4j_client()
+
+        # Step 1: Vault에 연결된 Entity들 조회 (RELATES_TO 관계가 있는 것만)
+        cypher_entities = """
+        MATCH (v:Vault {id: $vault_id})-[:HAS_NOTE]->(n:Note)-[:MENTIONS]->(e:Entity)
+        WITH DISTINCT e
+        OPTIONAL MATCH (e)-[r:RELATES_TO]-(other:Entity)
+        WITH e, count(r) as connection_count
+        WHERE connection_count >= $min_connections
+        RETURN
+            e.uuid as id,
+            e.name as name,
+            e.summary as summary,
+            CASE
+                WHEN e:Person THEN 'Person'
+                WHEN e:Project THEN 'Project'
+                WHEN e:Task THEN 'Task'
+                ELSE 'Topic'
+            END as type,
+            connection_count
+        ORDER BY connection_count DESC
+        LIMIT $limit
+        """
+
+        entities = client.query(cypher_entities, {
+            "vault_id": vault_id,
+            "min_connections": min_connections,
+            "limit": limit
+        })
+
+        if not entities:
+            return {
+                "status": "success",
+                "node_count": 0,
+                "edge_count": 0,
+                "nodes": [],
+                "edges": [],
+                "stats": {"by_type": {}}
+            }
+
+        entity_ids = [e["id"] for e in entities]
+
+        # Step 2: Entity 간 RELATES_TO 관계 조회
+        cypher_relations = """
+        MATCH (e1:Entity)-[r:RELATES_TO]->(e2:Entity)
+        WHERE e1.uuid IN $entity_ids AND e2.uuid IN $entity_ids
+        RETURN DISTINCT
+            e1.uuid as source,
+            e2.uuid as target,
+            type(r) as rel_type,
+            r.fact as fact
+        """
+
+        relations = client.query(cypher_relations, {"entity_ids": entity_ids})
+
+        # Step 3: 노드 데이터 구성
+        nodes = []
+        type_colors = {
+            "Topic": "#3498db",    # 파랑
+            "Project": "#2ecc71",  # 초록
+            "Person": "#e67e22",   # 주황
+            "Task": "#e74c3c"      # 빨강
+        }
+
+        for e in entities:
+            node = {
+                "id": e["id"],
+                "label": e["name"] or e["id"][:20],
+                "type": e["type"],
+                "color": type_colors.get(e["type"], "#95a5a6"),
+                "size": min(30, 10 + e["connection_count"] * 2),  # 연결 수에 따라 크기
+                "summary": e.get("summary", ""),
+                "connections": e["connection_count"]
+            }
+            nodes.append(node)
+
+        # Step 4: 엣지 데이터 구성
+        edges = []
+        for r in (relations or []):
+            edge = {
+                "source": r["source"],
+                "target": r["target"],
+                "type": r["rel_type"],
+                "label": r.get("fact", "")[:50] if r.get("fact") else ""
+            }
+            edges.append(edge)
+
+        # Step 5: 연결된 노트 정보 (선택적)
+        note_connections = {}
+        if include_notes:
+            cypher_notes = """
+            MATCH (n:Note)-[:MENTIONS]->(e:Entity)
+            WHERE e.uuid IN $entity_ids
+            RETURN e.uuid as entity_id, collect(DISTINCT n.note_id)[..5] as note_ids
+            """
+            note_results = client.query(cypher_notes, {"entity_ids": entity_ids})
+            for nr in (note_results or []):
+                note_connections[nr["entity_id"]] = nr["note_ids"]
+
+            # 노드에 note 정보 추가
+            for node in nodes:
+                node["connected_notes"] = note_connections.get(node["id"], [])
+
+        # 타입별 통계
+        stats = {"by_type": {}}
+        for e in entities:
+            t = e["type"]
+            stats["by_type"][t] = stats["by_type"].get(t, 0) + 1
+
+        return {
+            "status": "success",
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "nodes": nodes,
+            "edges": edges,
+            "stats": stats
+        }
+
+    except Exception as e:
+        logger.error(f"Entity graph error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -141,6 +141,39 @@ export interface StaleKnowledgeResponse {
 }
 
 // ============================================
+// Entity Graph Types (Knowledge Graph View)
+// ============================================
+
+export interface EntityNode {
+  id: string;
+  label: string;
+  type: "Topic" | "Project" | "Person" | "Task";
+  color: string;
+  size: number;
+  summary?: string;
+  connections: number;
+  connected_notes?: string[];
+}
+
+export interface EntityEdge {
+  source: string;
+  target: string;
+  type: string;
+  label?: string;
+}
+
+export interface EntityGraphData {
+  status: string;
+  node_count: number;
+  edge_count: number;
+  nodes: EntityNode[];
+  edges: EntityEdge[];
+  stats: {
+    by_type: Record<string, number>;
+  };
+}
+
+// ============================================
 // GraphRAG Search Types (Phase 12-14)
 // ============================================
 
@@ -417,6 +450,37 @@ export class DidymosAPI {
     url.searchParams.set("user_token", this.settings.userToken);
 
     const response = await fetch(url.toString(), { method: "POST" });
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  /**
+   * Entity Graph - Entity 노드와 RELATES_TO 관계를 직접 반환
+   * 클러스터 대신 진정한 Knowledge Graph 시각화
+   */
+  async fetchEntityGraph(
+    vaultId: string,
+    options?: {
+      limit?: number;
+      minConnections?: number;
+      includeNotes?: boolean;
+    }
+  ): Promise<EntityGraphData> {
+    const url = new URL(this.baseUrl("/graph/vault/entities"));
+    url.searchParams.set("vault_id", vaultId);
+    url.searchParams.set("user_token", this.settings.userToken);
+
+    if (options?.limit) {
+      url.searchParams.set("limit", String(options.limit));
+    }
+    if (options?.minConnections !== undefined) {
+      url.searchParams.set("min_connections", String(options.minConnections));
+    }
+    if (options?.includeNotes) {
+      url.searchParams.set("include_notes", "true");
+    }
+
+    const response = await fetch(url.toString());
     if (!response.ok) throw new Error(`API error: ${response.status}`);
     return response.json();
   }

@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, Plugin } from "obsidian";
 import { Network } from "vis-network";
 import { DidymosSettings } from "../settings";
-import { DidymosAPI, GraphData, ClusteredGraphData, StaleKnowledge } from "../api/client";
+import { DidymosAPI, GraphData, ClusteredGraphData, StaleKnowledge, EntityGraphData } from "../api/client";
 
 export const DIDYMOS_GRAPH_VIEW_TYPE = "didymos-graph-view";
 
@@ -21,7 +21,7 @@ export class DidymosGraphView extends ItemView {
   themePreset: "default" | "midnight" | "contrast" = "default";
   fontPreset: "normal" | "compact" | "large" = "normal";
   layoutSpacing: "regular" | "compact" = "regular";
-  viewMode: "note" | "vault" = "vault";  // 기본값을 vault로 변경
+  viewMode: "note" | "vault" | "entity" = "entity";  // 기본값을 entity로 변경 (Knowledge Graph)
   enableClustering: boolean = true; // Vault 모드에서 클러스터링 활성화
   currentZoomLevel: "out" | "medium" | "in" = "out"; // Zoom 레벨 추적
   clusterMethod: "semantic" | "type_based" = "semantic"; // 클러스터링 방식 선택
@@ -77,14 +77,19 @@ export class DidymosGraphView extends ItemView {
       text: "Note",
       cls: this.viewMode === "note" ? "active" : ""
     });
+    const entityBtn = modeToggle.createEl("button", {
+      text: "Entity",
+      cls: this.viewMode === "entity" ? "active" : ""
+    });
     const vaultBtn = modeToggle.createEl("button", {
-      text: "Vault",
+      text: "Cluster",
       cls: this.viewMode === "vault" ? "active" : ""
     });
 
     noteBtn.addEventListener("click", async () => {
       this.viewMode = "note";
       noteBtn.addClass("active");
+      entityBtn.removeClass("active");
       vaultBtn.removeClass("active");
       const active = this.app.workspace.getActiveFile();
       if (active) {
@@ -92,10 +97,19 @@ export class DidymosGraphView extends ItemView {
       }
     });
 
+    entityBtn.addEventListener("click", async () => {
+      this.viewMode = "entity";
+      entityBtn.addClass("active");
+      noteBtn.removeClass("active");
+      vaultBtn.removeClass("active");
+      await this.renderEntityGraph();
+    });
+
     vaultBtn.addEventListener("click", async () => {
       this.viewMode = "vault";
       vaultBtn.addClass("active");
       noteBtn.removeClass("active");
+      entityBtn.removeClass("active");
       await this.renderVaultGraph();
     });
 
@@ -219,8 +233,10 @@ export class DidymosGraphView extends ItemView {
       cls: "didymos-graph-empty",
     });
 
-    // 기본값이 vault이므로 vault 그래프로 초기화
-    if (this.viewMode === "vault") {
+    // 초기 뷰 모드에 따라 그래프 로드
+    if (this.viewMode === "entity") {
+      await this.renderEntityGraph();
+    } else if (this.viewMode === "vault") {
       await this.renderVaultGraph();
     } else {
       // Note 모드인 경우 현재 활성 노트로 초기화
@@ -645,6 +661,229 @@ export class DidymosGraphView extends ItemView {
       this.folderSelectEl.empty();
       this.folderSelectEl.createEl("span", { text: "Failed to load folders", cls: "didymos-folder-error" });
     }
+  }
+
+  /**
+   * Entity Graph - Entity 노드와 RELATES_TO 관계를 직접 시각화
+   * 진정한 Knowledge Graph 뷰
+   */
+  async renderEntityGraph() {
+    const graphContainer = this.containerEl.querySelector(
+      "#didymos-graph-network"
+    ) as HTMLElement;
+
+    if (!graphContainer) return;
+
+    graphContainer.empty();
+
+    if (this.clusterStatusEl) {
+      this.clusterStatusEl.setText("Entity Graph (loading...)");
+    }
+
+    try {
+      graphContainer.createEl("div", {
+        text: "Loading entity graph...",
+        cls: "didymos-graph-loading",
+      });
+
+      // Entity Graph API 호출
+      const entityData: EntityGraphData = await this.api.fetchEntityGraph(
+        this.settings.vaultId,
+        {
+          limit: 300,
+          minConnections: 1,
+          includeNotes: true
+        }
+      );
+
+      if (this.clusterStatusEl) {
+        const stats = entityData.stats.by_type;
+        const typeInfo = Object.entries(stats)
+          .map(([type, count]) => `${type}: ${count}`)
+          .join(" | ");
+        this.clusterStatusEl.setText(
+          `Entity Graph: ${entityData.node_count} nodes, ${entityData.edge_count} edges • ${typeInfo}`
+        );
+      }
+
+      console.log(`✅ Entity graph loaded: ${entityData.node_count} nodes, ${entityData.edge_count} edges`);
+
+      if (entityData.node_count === 0) {
+        graphContainer.empty();
+        graphContainer.createEl("div", {
+          text: "No entities with connections found. Try syncing some notes first.",
+          cls: "didymos-graph-empty",
+        });
+        return;
+      }
+
+      // Entity 노드를 vis-network 노드로 변환
+      const visNodes = entityData.nodes.map(entity => ({
+        id: entity.id,
+        label: entity.label,
+        shape: 'dot',
+        size: entity.size,
+        color: {
+          background: entity.color,
+          border: this.darkenColor(entity.color, 0.3),
+          highlight: {
+            background: this.lightenColor(entity.color, 0.2),
+            border: entity.color
+          }
+        },
+        font: {
+          size: 12,
+          color: '#333333',
+          strokeWidth: 2,
+          strokeColor: '#ffffff'
+        },
+        title: `${entity.label}\n\nType: ${entity.type}\nConnections: ${entity.connections}${entity.summary ? `\n\n${entity.summary}` : ''}${entity.connected_notes && entity.connected_notes.length > 0 ? `\n\nNotes: ${entity.connected_notes.slice(0, 3).join(', ')}...` : ''}`,
+        group: entity.type,
+        entity_data: entity
+      }));
+
+      // RELATES_TO 관계를 vis-network 엣지로 변환
+      const visEdges = entityData.edges.map((edge, idx) => ({
+        id: `edge_${idx}`,
+        from: edge.source,
+        to: edge.target,
+        label: edge.label || '',
+        arrows: { to: { enabled: true, scaleFactor: 0.5 } },
+        color: {
+          color: '#cccccc',
+          highlight: '#666666',
+          opacity: 0.6
+        },
+        width: 1,
+        smooth: { enabled: true, type: 'continuous', roundness: 0.5 } as any,
+        title: edge.label || edge.type
+      }));
+
+      const graphData: GraphData = {
+        nodes: visNodes,
+        edges: visEdges
+      };
+
+      this.renderEntityNetworkGraph(graphContainer, graphData);
+
+    } catch (error) {
+      console.error("Failed to load entity graph:", error);
+      graphContainer.empty();
+      graphContainer.createEl("div", {
+        text: `Failed to load entity graph: ${error}`,
+        cls: "didymos-graph-error",
+      });
+    }
+  }
+
+  /**
+   * Entity Graph 전용 vis-network 렌더링
+   */
+  renderEntityNetworkGraph(container: HTMLElement, graphData: GraphData) {
+    container.empty();
+
+    const networkContainer = container.createEl("div", {
+      cls: "didymos-network-container",
+    });
+    networkContainer.style.height = "100%";
+    networkContainer.style.width = "100%";
+
+    const options = {
+      nodes: {
+        shape: 'dot',
+        scaling: {
+          min: 10,
+          max: 40
+        },
+        font: {
+          size: 12,
+          face: 'Tahoma'
+        }
+      },
+      edges: {
+        smooth: {
+          enabled: true,
+          type: 'continuous',
+          roundness: 0.5
+        } as any,
+        arrows: {
+          to: { enabled: true, scaleFactor: 0.5 }
+        }
+      },
+      physics: {
+        enabled: true,
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {
+          gravitationalConstant: -50,
+          centralGravity: 0.01,
+          springLength: 100,
+          springConstant: 0.08,
+          damping: 0.4
+        },
+        stabilization: {
+          enabled: true,
+          iterations: 200,
+          updateInterval: 25
+        }
+      },
+      interaction: {
+        hover: true,
+        tooltipDelay: 100,
+        navigationButtons: true,
+        keyboard: true,
+        zoomView: true
+      },
+      groups: {
+        Topic: { color: { background: '#3498db', border: '#2980b9' } },
+        Project: { color: { background: '#2ecc71', border: '#27ae60' } },
+        Person: { color: { background: '#e67e22', border: '#d35400' } },
+        Task: { color: { background: '#e74c3c', border: '#c0392b' } }
+      }
+    };
+
+    if (this.network) {
+      this.network.destroy();
+    }
+
+    this.network = new Network(
+      networkContainer,
+      { nodes: graphData.nodes, edges: graphData.edges },
+      options
+    );
+
+    // 노드 클릭 이벤트 - 연결된 노트 열기
+    this.network.on("doubleClick", async (params) => {
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        const node = graphData.nodes.find(n => n.id === nodeId);
+        if (node && (node as any).entity_data?.connected_notes?.length > 0) {
+          const notePath = (node as any).entity_data.connected_notes[0];
+          const file = this.app.vault.getAbstractFileByPath(notePath);
+          if (file) {
+            await this.app.workspace.openLinkText(notePath, "", false);
+          }
+        }
+      }
+    });
+  }
+
+  // 색상 유틸리티 함수들
+  darkenColor(hex: string, percent: number): string {
+    const num = parseInt(hex.replace('#', ''), 16);
+    const amt = Math.round(2.55 * percent * 100);
+    const R = Math.max((num >> 16) - amt, 0);
+    const G = Math.max((num >> 8 & 0x00FF) - amt, 0);
+    const B = Math.max((num & 0x0000FF) - amt, 0);
+    return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
+  }
+
+  lightenColor(hex: string, percent: number): string {
+    const num = parseInt(hex.replace('#', ''), 16);
+    const amt = Math.round(2.55 * percent * 100);
+    const R = Math.min((num >> 16) + amt, 255);
+    const G = Math.min((num >> 8 & 0x00FF) + amt, 255);
+    const B = Math.min((num & 0x0000FF) + amt, 255);
+    return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
   }
 
   async renderVaultGraph() {
