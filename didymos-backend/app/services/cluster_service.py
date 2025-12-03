@@ -70,11 +70,11 @@ def compute_entity_graph_centrality(
     if not note_ids:
         return {}
 
-    # PKM 타입 필터 + EntityNode (Graphiti) 지원
+    # PKM 타입 필터 + Entity (Graphiti) 지원
     type_conditions = [f"'{t}' IN labels(entity)" for t in include_types]
     if include_entity_node:
-        # EntityNode with PKM labels (hybrid mode)
-        type_conditions.append("'EntityNode' IN labels(entity)")
+        # Entity with PKM labels (hybrid mode) - Graphiti uses 'Entity' label
+        type_conditions.append("'Entity' IN labels(entity)")
     type_filter = " OR ".join(type_conditions)
 
     # Step 1: 각 엔티티의 degree (연결된 노트 수) 계산
@@ -314,10 +314,10 @@ def compute_clusters_louvain(
     """
     try:
         # Step 1: 서브그래프 투영 (Notes 제외, Entities만)
-        # PKM 타입 + EntityNode (Graphiti) 지원
+        # PKM 타입 + Entity (Graphiti) 지원
         type_conditions = [f"'{t}' IN labels(entity)" for t in include_types]
         if include_entity_node:
-            type_conditions.append("'EntityNode' IN labels(entity)")
+            type_conditions.append("'Entity' IN labels(entity)")
         type_filter = " OR ".join(type_conditions)
         folder_filter = ""
         if folder_prefix:

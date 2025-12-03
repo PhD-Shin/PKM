@@ -564,14 +564,16 @@ async def migrate_graphiti_to_hybrid(
     max_iterations: int = Query(10, description="Maximum migration iterations")
 ) -> Dict[str, Any]:
     """
-    Graphiti EntityNode에 PKM 레이블 추가 마이그레이션
+    Graphiti Entity에 PKM 레이블 추가 마이그레이션
 
-    Graphiti가 생성한 EntityNode에 Topic/Project/Task/Person 레이블을 추가하여
+    Graphiti가 생성한 Entity에 Topic/Project/Task/Person 레이블을 추가하여
     cluster_service와 호환되도록 합니다.
 
+    Note: Graphiti uses 'Entity' and 'Episodic' labels (NOT 'EntityNode' or 'EpisodicNode')
+
     이 작업은 다음을 수행합니다:
-    1. EntityNode에 PKM 타입 레이블 추가 (Topic, Project, Task, Person)
-    2. Episode-Entity 관계를 Note-Entity MENTIONS로 변환
+    1. Entity에 PKM 타입 레이블 추가 (Topic, Project, Task, Person)
+    2. Episodic-Entity MENTIONS 관계를 Note-Entity MENTIONS로 변환
     """
     try:
         from app.services.hybrid_graphiti_service import migrate_graphiti_to_hybrid
@@ -596,9 +598,10 @@ async def migrate_graphiti_to_hybrid(
 @router.get("/debug/entity-nodes")
 async def get_entity_node_stats() -> Dict[str, Any]:
     """
-    Graphiti EntityNode 통계 조회
+    Graphiti Entity 통계 조회
 
-    EntityNode 중 PKM 레이블이 있는 것과 없는 것의 수를 확인합니다.
+    Entity (Graphiti) 중 PKM 레이블이 있는 것과 없는 것의 수를 확인합니다.
+    Note: Graphiti uses 'Entity' label (NOT 'EntityNode')
     """
     try:
         client = get_neo4j_client()
@@ -606,29 +609,29 @@ async def get_entity_node_stats() -> Dict[str, Any]:
         # 모든 노드 레이블 조회
         all_labels = client.query("CALL db.labels() YIELD label RETURN label ORDER BY label", {})
 
-        # EntityNode 전체 수
-        total = client.query("MATCH (e:EntityNode) RETURN count(e) as count", {})
+        # Entity 전체 수 (Graphiti uses 'Entity' label)
+        total = client.query("MATCH (e:Entity) RETURN count(e) as count", {})
 
-        # Entity 레이블 수 (Graphiti가 사용할 수 있음)
-        entity_count = client.query("MATCH (e:Entity) RETURN count(e) as count", {})
+        # Episodic 노드 수 (Graphiti episodes)
+        episodic_count = client.query("MATCH (e:Episodic) RETURN count(e) as count", {})
 
-        # PKM 레이블이 있는 EntityNode
+        # PKM 레이블이 있는 Entity
         with_pkm = client.query("""
-            MATCH (e:EntityNode)
+            MATCH (e:Entity)
             WHERE e:Topic OR e:Project OR e:Task OR e:Person
             RETURN count(e) as count
         """, {})
 
-        # PKM 레이블이 없는 EntityNode
+        # PKM 레이블이 없는 Entity
         without_pkm = client.query("""
-            MATCH (e:EntityNode)
+            MATCH (e:Entity)
             WHERE NOT e:Topic AND NOT e:Project AND NOT e:Task AND NOT e:Person
             RETURN count(e) as count
         """, {})
 
         # PKM 타입별 통계
         by_type = client.query("""
-            MATCH (e:EntityNode)
+            MATCH (e:Entity)
             WHERE e:Topic OR e:Project OR e:Task OR e:Person
             WITH CASE
                 WHEN e:Topic THEN 'Topic'
@@ -639,15 +642,29 @@ async def get_entity_node_stats() -> Dict[str, Any]:
             RETURN pkm_type, count(*) as count
         """, {})
 
+        # Note -> Entity MENTIONS 관계 수
+        note_entity_mentions = client.query("""
+            MATCH (n:Note)-[m:MENTIONS]->(e:Entity)
+            RETURN count(m) as count
+        """, {})
+
+        # Episodic -> Entity MENTIONS 관계 수 (Graphiti)
+        episodic_entity_mentions = client.query("""
+            MATCH (ep:Episodic)-[m:MENTIONS]->(e:Entity)
+            RETURN count(m) as count
+        """, {})
+
         return {
             "all_labels": [r["label"] for r in (all_labels or [])],
-            "total_entity_nodes": total[0]["count"] if total else 0,
-            "entity_count": entity_count[0]["count"] if entity_count else 0,
+            "total_entities": total[0]["count"] if total else 0,
+            "total_episodic": episodic_count[0]["count"] if episodic_count else 0,
             "with_pkm_labels": with_pkm[0]["count"] if with_pkm else 0,
             "without_pkm_labels": without_pkm[0]["count"] if without_pkm else 0,
-            "by_pkm_type": {r["pkm_type"]: r["count"] for r in (by_type or [])}
+            "by_pkm_type": {r["pkm_type"]: r["count"] for r in (by_type or [])},
+            "note_entity_mentions": note_entity_mentions[0]["count"] if note_entity_mentions else 0,
+            "episodic_entity_mentions": episodic_entity_mentions[0]["count"] if episodic_entity_mentions else 0
         }
 
     except Exception as e:
-        logger.error(f"EntityNode stats error: {e}")
+        logger.error(f"Entity stats error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

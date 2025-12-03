@@ -1,17 +1,19 @@
 """
 Hybrid Graphiti + PKM Ontology Service
 
-Graphiti의 EntityNode에 PKM 온톨로지 레이블(Topic, Project, Task, Person)을
+Graphiti의 Entity에 PKM 온톨로지 레이블(Topic, Project, Task, Person)을
 추가하여 두 시스템의 장점을 결합:
 
 - Graphiti: Temporal KG, 자동 엔티티 요약, 하이브리드 검색
 - PKM Ontology: 우리 cluster_service와 호환되는 레이블
 
 Flow:
-1. Graphiti가 노트를 처리 → EntityNode 생성
-2. 후처리로 EntityNode에 PKM 레이블 추가 (LLM 분류)
-3. Note → EntityNode MENTIONS 관계 생성
+1. Graphiti가 노트를 처리 → Entity 생성 (Episodic -> Entity MENTIONS)
+2. 후처리로 Entity에 PKM 레이블 추가 (LLM 분류)
+3. Note → Entity MENTIONS 관계 생성 (Episodic의 name에서 note_id 추출)
 4. cluster_service가 PKM 레이블로 클러스터링
+
+Note: Graphiti uses 'Entity' and 'Episodic' labels (NOT 'EntityNode' or 'EpisodicNode')
 """
 
 import logging
@@ -101,9 +103,9 @@ async def add_pkm_labels_to_graphiti_entities(
     client = get_neo4j_client()
 
     try:
-        # Step 1: PKM 레이블이 없는 EntityNode 조회
+        # Step 1: PKM 레이블이 없는 Entity 조회 (Graphiti uses 'Entity' label)
         cypher_find = """
-        MATCH (e:EntityNode)
+        MATCH (e:Entity)
         WHERE NOT e:Topic AND NOT e:Project AND NOT e:Task AND NOT e:Person
         RETURN e.uuid as uuid, e.name as name, e.summary as summary
         LIMIT $batch_size
@@ -112,14 +114,14 @@ async def add_pkm_labels_to_graphiti_entities(
         entities = client.query(cypher_find, {"batch_size": batch_size})
 
         if not entities:
-            logger.info("No EntityNode without PKM labels found")
+            logger.info("No Entity without PKM labels found")
             return {
                 "status": "completed",
                 "processed": 0,
-                "message": "All EntityNodes already have PKM labels"
+                "message": "All Entities already have PKM labels"
             }
 
-        logger.info(f"Found {len(entities)} EntityNodes to classify")
+        logger.info(f"Found {len(entities)} Entities to classify")
 
         # Step 2: 각 엔티티 분류 및 레이블 추가
         stats = {"Topic": 0, "Project": 0, "Task": 0, "Person": 0, "errors": 0}
@@ -135,7 +137,7 @@ async def add_pkm_labels_to_graphiti_entities(
 
                 # 레이블 추가
                 cypher_add_label = f"""
-                MATCH (e:EntityNode {{uuid: $uuid}})
+                MATCH (e:Entity {{uuid: $uuid}})
                 SET e:{pkm_type}
                 SET e.pkm_type = $pkm_type
                 SET e.pkm_classified_at = datetime()
@@ -171,10 +173,10 @@ async def add_pkm_labels_to_graphiti_entities(
 
 
 async def _count_unlabeled_entities(client) -> int:
-    """PKM 레이블이 없는 EntityNode 수 조회"""
+    """PKM 레이블이 없는 Entity 수 조회"""
     try:
         result = client.query("""
-            MATCH (e:EntityNode)
+            MATCH (e:Entity)
             WHERE NOT e:Topic AND NOT e:Project AND NOT e:Task AND NOT e:Person
             RETURN count(e) as count
         """, {})
@@ -188,13 +190,13 @@ async def create_mentions_from_episodes(
     batch_size: int = 100
 ) -> Dict[str, Any]:
     """
-    Graphiti Episode-Entity 관계를 Note-Entity MENTIONS 관계로 변환
+    Graphiti Episodic-Entity 관계를 Note-Entity MENTIONS 관계로 변환
 
-    Graphiti는 Episode → EntityNode 관계를 사용
+    Graphiti는 Episodic → Entity MENTIONS 관계를 사용
     cluster_service는 Note → Entity MENTIONS 관계를 기대
 
-    이 함수는 Episode의 source_description에서 note_id를 추출하여
-    Note → EntityNode MENTIONS 관계를 생성
+    이 함수는 Episodic의 name에서 note_id를 추출하여 (name = 'note_{note_id}')
+    Note → Entity MENTIONS 관계를 생성
 
     Args:
         vault_id: 특정 vault만 처리
@@ -206,14 +208,15 @@ async def create_mentions_from_episodes(
     client = get_neo4j_client()
 
     try:
-        # Step 1: Episode-Entity 관계에서 Note-Entity MENTIONS가 없는 것 찾기
-        # Graphiti의 Episode에는 source_description에 "Obsidian note: {path}" 형태로 저장됨
+        # Step 1: Episodic-Entity 관계에서 Note-Entity MENTIONS가 없는 것 찾기
+        # Graphiti의 Episodic.name = 'note_{note_id}' 형태
+        # Note.note_id = '{path}' 형태
         cypher_find = """
-        MATCH (ep:EpisodicNode)-[:MENTIONS]->(e:EntityNode)
-        WHERE ep.source_description STARTS WITH 'Obsidian note:'
+        MATCH (ep:Episodic)-[:MENTIONS]->(e:Entity)
+        WHERE ep.name STARTS WITH 'note_'
         WITH ep, e,
-             replace(ep.source_description, 'Obsidian note: ', '') as note_path
-        MATCH (n:Note {note_id: note_path})
+             replace(ep.name, 'note_', '') as note_id
+        MATCH (n:Note {note_id: note_id})
         WHERE NOT (n)-[:MENTIONS]->(e)
         RETURN n.note_id as note_id, e.uuid as entity_uuid, e.name as entity_name
         LIMIT $batch_size
@@ -226,7 +229,7 @@ async def create_mentions_from_episodes(
             return {
                 "status": "completed",
                 "created": 0,
-                "message": "All Episode-Entity relations already have MENTIONS"
+                "message": "All Episodic-Entity relations already have Note MENTIONS"
             }
 
         logger.info(f"Found {len(relations)} MENTIONS relationships to create")
@@ -239,7 +242,7 @@ async def create_mentions_from_episodes(
             try:
                 cypher_create = """
                 MATCH (n:Note {note_id: $note_id})
-                MATCH (e:EntityNode {uuid: $entity_uuid})
+                MATCH (e:Entity {uuid: $entity_uuid})
                 MERGE (n)-[m:MENTIONS]->(e)
                 SET m.created_at = datetime()
                 SET m.source = 'graphiti_migration'
@@ -370,12 +373,12 @@ async def process_note_hybrid(
         if nodes_extracted == 0:
             return graphiti_result
 
-        # Step 2: 추출된 EntityNode에 PKM 레이블 추가
+        # Step 2: 추출된 Entity에 PKM 레이블 추가
         client = get_neo4j_client()
 
-        # 이 노트와 연결된 EntityNode 찾기
+        # 이 노트와 연결된 Entity 찾기 (Graphiti uses 'Episodic' and 'Entity' labels)
         cypher_find_entities = """
-        MATCH (ep:EpisodicNode)-[:MENTIONS]->(e:EntityNode)
+        MATCH (ep:Episodic)-[:MENTIONS]->(e:Entity)
         WHERE ep.name = $episode_name
           AND NOT e:Topic AND NOT e:Project AND NOT e:Task AND NOT e:Person
         RETURN e.uuid as uuid, e.name as name, e.summary as summary
@@ -392,7 +395,7 @@ async def process_note_hybrid(
             )
 
             cypher_add_label = f"""
-            MATCH (e:EntityNode {{uuid: $uuid}})
+            MATCH (e:Entity {{uuid: $uuid}})
             SET e:{pkm_type}
             SET e.pkm_type = $pkm_type
             SET e.pkm_classified_at = datetime()
@@ -401,10 +404,10 @@ async def process_note_hybrid(
             client.query(cypher_add_label, {"uuid": entity["uuid"], "pkm_type": pkm_type})
             labeled_count += 1
 
-        # Step 3: Note → EntityNode MENTIONS 관계 생성
+        # Step 3: Note → Entity MENTIONS 관계 생성
         cypher_create_mentions = """
         MATCH (n:Note {note_id: $note_id})
-        MATCH (ep:EpisodicNode {name: $episode_name})-[:MENTIONS]->(e:EntityNode)
+        MATCH (ep:Episodic {name: $episode_name})-[:MENTIONS]->(e:Entity)
         WHERE NOT (n)-[:MENTIONS]->(e)
         MERGE (n)-[m:MENTIONS]->(e)
         SET m.created_at = datetime()
