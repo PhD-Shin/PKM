@@ -690,10 +690,11 @@ async def get_vault_entity_graph(
     try:
         client = get_neo4j_client()
 
-        # Step 1: Vault에 연결된 Entity들 조회 (RELATES_TO 관계가 있는 것만)
+        # Step 1: Entity들 조회 (RELATES_TO 관계가 있는 것)
+        # Graphiti는 Episodic-[:MENTIONS]->Entity 구조를 사용하므로
+        # Entity를 직접 조회하고 RELATES_TO 관계로 필터링
         cypher_entities = """
-        MATCH (v:Vault {id: $vault_id})-[:HAS_NOTE]->(n:Note)-[:MENTIONS]->(e:Entity)
-        WITH DISTINCT e
+        MATCH (e:Entity)
         OPTIONAL MATCH (e)-[r:RELATES_TO]-(other:Entity)
         WITH e, count(r) as connection_count
         WHERE connection_count >= $min_connections
