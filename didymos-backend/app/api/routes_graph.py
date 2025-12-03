@@ -603,8 +603,14 @@ async def get_entity_node_stats() -> Dict[str, Any]:
     try:
         client = get_neo4j_client()
 
+        # 모든 노드 레이블 조회
+        all_labels = client.query("CALL db.labels() YIELD label RETURN label ORDER BY label", {})
+
         # EntityNode 전체 수
         total = client.query("MATCH (e:EntityNode) RETURN count(e) as count", {})
+
+        # Entity 레이블 수 (Graphiti가 사용할 수 있음)
+        entity_count = client.query("MATCH (e:Entity) RETURN count(e) as count", {})
 
         # PKM 레이블이 있는 EntityNode
         with_pkm = client.query("""
@@ -634,7 +640,9 @@ async def get_entity_node_stats() -> Dict[str, Any]:
         """, {})
 
         return {
+            "all_labels": [r["label"] for r in (all_labels or [])],
             "total_entity_nodes": total[0]["count"] if total else 0,
+            "entity_count": entity_count[0]["count"] if entity_count else 0,
             "with_pkm_labels": with_pkm[0]["count"] if with_pkm else 0,
             "without_pkm_labels": without_pkm[0]["count"] if without_pkm else 0,
             "by_pkm_type": {r["pkm_type"]: r["count"] for r in (by_type or [])}
