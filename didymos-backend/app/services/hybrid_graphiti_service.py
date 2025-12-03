@@ -29,6 +29,43 @@ logger = logging.getLogger(__name__)
 # PKM 온톨로지 타입
 PKM_TYPES = ["Topic", "Project", "Task", "Person"]
 
+# 엔티티 이름 최소 길이 (너무 짧은 이름 제외)
+MIN_ENTITY_NAME_LENGTH = 2
+MAX_ENTITY_NAME_LENGTH = 100
+
+
+def is_valid_entity(name: str) -> bool:
+    """
+    엔티티 이름의 기본 유효성 검사 (최소한의 필터링만)
+
+    블랙리스트는 사용하지 않음 - 모든 명사가 문맥에 따라 유용할 수 있음
+    대신 min_connections 필터로 시각화 단계에서 필터링
+
+    Returns:
+        True if entity name is valid
+    """
+    if not name:
+        return False
+
+    name_stripped = name.strip()
+
+    # 길이 체크
+    if len(name_stripped) < MIN_ENTITY_NAME_LENGTH:
+        return False
+    if len(name_stripped) > MAX_ENTITY_NAME_LENGTH:
+        return False
+
+    # 숫자만으로 이루어진 경우 제외 (예: "123", "2024")
+    if name_stripped.isdigit():
+        return False
+
+    # 특수문자만으로 이루어진 경우 제외
+    if not any(c.isalnum() for c in name_stripped):
+        return False
+
+    return True
+
+
 # 엔티티 이름 기반 분류 규칙 (LLM 호출 없이 빠른 분류)
 # 더 정교한 분류가 필요하면 LLM 사용
 CLASSIFICATION_RULES = {
@@ -388,9 +425,18 @@ async def process_note_hybrid(
         entities = client.query(cypher_find_entities, {"episode_name": episode_name})
 
         labeled_count = 0
+
         for entity in (entities or []):
+            entity_name = entity["name"] or entity["uuid"]
+
+            # 기본 유효성 검사만 수행 (너무 짧거나 숫자만인 경우만 제외)
+            # 블랙리스트는 사용하지 않음 - min_connections 필터로 시각화 단계에서 처리
+            if not is_valid_entity(entity_name):
+                logger.debug(f"⏩ Skipping invalid entity: {entity_name}")
+                continue
+
             pkm_type = classify_entity_to_pkm_type(
-                entity["name"] or entity["uuid"],
+                entity_name,
                 entity.get("summary", "")
             )
 
@@ -404,7 +450,7 @@ async def process_note_hybrid(
             client.query(cypher_add_label, {"uuid": entity["uuid"], "pkm_type": pkm_type})
             labeled_count += 1
 
-        # Step 3: Note → Entity MENTIONS 관계 생성
+        # Step 3: Note → Entity MENTIONS 관계 생성 (유효한 엔티티만)
         cypher_create_mentions = """
         MATCH (n:Note {note_id: $note_id})
         MATCH (ep:Episodic {name: $episode_name})-[:MENTIONS]->(e:Entity)

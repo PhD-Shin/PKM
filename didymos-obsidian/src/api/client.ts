@@ -174,6 +174,66 @@ export interface EntityGraphData {
 }
 
 // ============================================
+// Entity Cluster Types (2nd Brain View)
+// ============================================
+
+export interface EntityCluster {
+  id: string;
+  name: string;
+  representative_uuid: string;
+  entity_count: number;
+  entity_uuids: string[];
+  sample_entities: string[];
+  type_distribution: Record<string, number>;
+  internal_edges: number;
+  cohesion_score: number;
+  computed_at: string;
+}
+
+export interface EntityClusterEdge {
+  from: string;
+  to: string;
+  weight: number;
+  relation_type: string;
+}
+
+export interface EntityClusterData {
+  status: string;
+  cluster_count: number;
+  total_entities: number;
+  clustered_entities: number;
+  clusters: EntityCluster[];
+  edges: EntityClusterEdge[];
+  method: string;
+  computed_at: string;
+}
+
+export interface EntityClusterDetail {
+  id: string;
+  name: string;
+  representative_uuid: string;
+  entity_count: number;
+  entity_uuids: string[];
+  sample_entities: string[];
+  type_distribution: Record<string, number>;
+  cohesion_score: number;
+  computed_at: string;
+  entities: Array<{
+    uuid: string;
+    name: string;
+    summary: string;
+    pkm_type: string;
+    connections: number;
+  }>;
+  internal_edges: Array<{
+    from: string;
+    to: string;
+    fact: string;
+    weight: number;
+  }>;
+}
+
+// ============================================
 // GraphRAG Search Types (Phase 12-14)
 // ============================================
 
@@ -281,6 +341,26 @@ export class DidymosAPI {
       },
       body: JSON.stringify(payload),
     });
+
+    if (!response.ok) {
+      throw new Error(`API error: ${response.status}`);
+    }
+
+    return response.json();
+  }
+
+  async deleteNote(noteId: string): Promise<{
+    status: string;
+    message: string;
+    note_id: string;
+    deleted_notes: number;
+    orphans_cleaned: number;
+  }> {
+    const url = new URL(this.baseUrl(`/notes/delete/${encodeURIComponent(noteId)}`));
+    url.searchParams.set("user_token", this.settings.userToken);
+    url.searchParams.set("vault_id", this.settings.vaultId);
+
+    const response = await fetch(url.toString(), { method: "DELETE" });
 
     if (!response.ok) {
       throw new Error(`API error: ${response.status}`);
@@ -620,6 +700,57 @@ export class DidymosAPI {
    */
   async getSearchStatus(): Promise<SearchStatusResponse> {
     const url = new URL(this.baseUrl("/search/status"));
+
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  // ============================================
+  // Entity Cluster APIs (2nd Brain View)
+  // ============================================
+
+  /**
+   * Entity 클러스터 조회 - 하이브리드 클러스터링
+   * RELATES_TO 그래프 구조 + name_embedding 벡터 유사도 결합
+   */
+  async fetchEntityClusters(
+    vaultId: string,
+    options?: {
+      minClusterSize?: number;
+      resolution?: number;
+      folderPrefix?: string;  // 폴더 필터 추가
+    }
+  ): Promise<EntityClusterData> {
+    const url = new URL(this.baseUrl("/graph/vault/entity-clusters"));
+    url.searchParams.set("vault_id", vaultId);
+    url.searchParams.set("user_token", this.settings.userToken);
+
+    if (options?.minClusterSize) {
+      url.searchParams.set("min_cluster_size", String(options.minClusterSize));
+    }
+    if (options?.resolution) {
+      url.searchParams.set("resolution", String(options.resolution));
+    }
+    if (options?.folderPrefix) {
+      url.searchParams.set("folder_prefix", options.folderPrefix);
+    }
+
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  /**
+   * 특정 클러스터의 상세 정보 조회
+   */
+  async fetchEntityClusterDetail(
+    vaultId: string,
+    clusterId: string
+  ): Promise<{ status: string; cluster: EntityClusterDetail }> {
+    const url = new URL(this.baseUrl(`/graph/vault/entity-clusters/${encodeURIComponent(clusterId)}`));
+    url.searchParams.set("vault_id", vaultId);
+    url.searchParams.set("user_token", this.settings.userToken);
 
     const response = await fetch(url.toString());
     if (!response.ok) throw new Error(`API error: ${response.status}`);

@@ -117,6 +117,21 @@ export default class DidymosPlugin extends Plugin {
       );
     }
 
+    // Auto-delete from Neo4j when file is deleted in Obsidian
+    this.registerEvent(
+      this.app.vault.on('delete', async (file) => {
+        if (file instanceof TFile && file.extension === 'md') {
+          try {
+            console.log(`🗑️ File deleted in Obsidian: ${file.path}`);
+            await this.api.deleteNote(file.path);
+            console.log(`✅ Note deleted from Neo4j: ${file.path}`);
+          } catch (error) {
+            console.error(`❌ Failed to delete note from Neo4j: ${file.path}`, error);
+          }
+        }
+      })
+    );
+
     if (this.settings.autoSync && this.settings.syncMode === 'hourly') {
       this.hourlyInterval = window.setInterval(async () => {
         await this.bulkProcessVault();

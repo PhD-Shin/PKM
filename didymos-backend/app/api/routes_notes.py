@@ -260,3 +260,78 @@ async def get_note_graph(note_id: str, user_token: str, hops: int = 1):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get note graph"
         )
+
+
+@router.delete("/delete/{note_id:path}")
+async def delete_note(
+    note_id: str,
+    user_token: str = Query(..., description="User token"),
+    vault_id: str = Query(..., description="Vault ID")
+):
+    """
+    노트 삭제 API
+
+    Neo4j에서 Note 노드와 관련 관계들을 삭제합니다.
+    - Note 노드 삭제
+    - MENTIONS 관계 삭제 (Note -> Entity)
+    - HAS_NOTE 관계 삭제 (Vault -> Note)
+    - 고아 Entity 정리 (다른 Note와 연결되지 않은 Entity)
+
+    Args:
+        note_id: 삭제할 노트의 ID (경로)
+        user_token: 사용자 토큰
+        vault_id: Vault ID
+    """
+    try:
+        client = get_neo4j_client()
+        user_id = get_user_id_from_token(user_token)
+
+        logger.info(f"🗑️ Deleting note: {note_id}")
+
+        # Step 1: Note와 관련 관계 삭제
+        cypher_delete_note = """
+        MATCH (n:Note {note_id: $note_id})
+        OPTIONAL MATCH (n)-[m:MENTIONS]->(e:Entity)
+        OPTIONAL MATCH (v:Vault)-[h:HAS_NOTE]->(n)
+        DELETE m, h, n
+        RETURN count(n) as deleted_notes
+        """
+
+        result = client.query(cypher_delete_note, {"note_id": note_id})
+        deleted_notes = result[0]["deleted_notes"] if result else 0
+
+        # Step 2: 고아 Entity 정리 (선택적 - 다른 Note와 연결되지 않은 Entity만 삭제)
+        # MENTIONS 관계가 전혀 없는 Entity 삭제
+        cypher_cleanup_orphan_entities = """
+        MATCH (e:Entity)
+        WHERE NOT (e)<-[:MENTIONS]-(:Note)
+          AND NOT (e)<-[:MENTIONS]-(:Episodic)
+        WITH e
+        OPTIONAL MATCH (e)-[r:RELATES_TO]-()
+        DELETE r, e
+        RETURN count(e) as orphans_deleted
+        """
+
+        cleanup_result = client.query(cypher_cleanup_orphan_entities, {})
+        orphans_deleted = cleanup_result[0]["orphans_deleted"] if cleanup_result else 0
+
+        # 캐시 무효화
+        context_cache.clear(note_id)
+        graph_cache.clear_prefix(f"{note_id}:")
+
+        logger.info(f"✅ Note deleted: {note_id}, orphan entities cleaned: {orphans_deleted}")
+
+        return {
+            "status": "success",
+            "message": f"Note deleted successfully",
+            "note_id": note_id,
+            "deleted_notes": deleted_notes,
+            "orphans_cleaned": orphans_deleted
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to delete note {note_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete note: {str(e)}"
+        )

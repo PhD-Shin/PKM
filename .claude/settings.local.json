@@ -39,7 +39,8 @@
       "Bash(railway variables:*)",
       "Bash(git checkout:*)",
       "Bash(timeout 15 railway logs:*)",
-      "Bash(timeout 20 railway logs:*)"
+      "Bash(timeout 20 railway logs:*)",
+      "Bash(gtimeout 15 railway logs:*)"
     ],
     "deny": [],
     "ask": []

@@ -19,6 +19,10 @@ from app.services.cluster_service import (
     generate_llm_summaries,
     is_cluster_cache_stale
 )
+from app.services.entity_cluster_service import (
+    compute_entity_clusters_hybrid,
+    get_cluster_detail
+)
 from app.schemas.cluster import (
     ClusteredGraphResponse,
     ClusterComputeRequest,
@@ -809,4 +813,174 @@ async def get_vault_entity_graph(
 
     except Exception as e:
         logger.error(f"Entity graph error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vault/entity-clusters")
+async def get_entity_clusters(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    folder_prefix: str = Query(None, description="폴더 경로 필터 (예: '1_프로젝트/'). 해당 폴더 노트의 엔티티만 클러스터링"),
+    min_cluster_size: int = Query(3, description="Minimum entities per cluster", ge=2, le=20),
+    resolution: float = Query(1.0, description="Louvain resolution (higher = more clusters)", ge=0.5, le=3.0),
+    min_connections: int = Query(1, description="최소 연결 노트 수 (기본 1 = 모든 엔티티 포함, 2 = 2개 이상 노트에서 언급된 엔티티만)", ge=1, le=10),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    하이브리드 Entity 클러스터링
+
+    RELATES_TO 그래프 구조 + name_embedding 벡터 유사도를 결합하여
+    Entity들을 의미론적 클러스터로 그룹핑합니다.
+
+    2nd Brain 시각화를 위한 클러스터 뷰:
+    - 각 클러스터는 시멘틱하게 유사한 개념들의 그룹
+    - 클러스터 간 연결은 RELATES_TO 관계에 기반
+    - 클러스터 내 엔티티들은 펼쳐서 볼 수 있음
+
+    **알고리즘:**
+    1. RELATES_TO 그래프에서 Louvain 커뮤니티 탐지
+    2. name_embedding으로 HDBSCAN 클러스터링
+    3. 두 결과를 병합하여 최종 클러스터 결정
+
+    **응답 예시:**
+    ```json
+    {
+      "status": "success",
+      "cluster_count": 15,
+      "total_entities": 635,
+      "clusters": [
+        {
+          "id": "cluster_0",
+          "name": "Knowledge Graph",
+          "entity_count": 42,
+          "sample_entities": ["PKM", "Obsidian", "Neo4j", ...],
+          "type_distribution": {"Topic": 35, "Project": 7},
+          "cohesion_score": 0.85
+        }
+      ],
+      "edges": [
+        {"from": "cluster_0", "to": "cluster_1", "weight": 5}
+      ]
+    }
+    ```
+    """
+    try:
+        folder_info = f" for folder '{folder_prefix}'" if folder_prefix else ""
+        logger.info(f"Computing entity clusters for vault {vault_id}{folder_info} (min_connections={min_connections})")
+
+        result = compute_entity_clusters_hybrid(
+            client=client,
+            min_cluster_size=min_cluster_size,
+            resolution=resolution,
+            folder_prefix=folder_prefix,
+            min_connections=min_connections
+        )
+
+        return {
+            "status": "success",
+            "cluster_count": len(result["clusters"]),
+            "total_entities": result["total_entities"],
+            "clustered_entities": result.get("clustered_entities", 0),
+            "clusters": result["clusters"],
+            "edges": result["edges"],
+            "method": result["method"],
+            "computed_at": result["computed_at"]
+        }
+
+    except Exception as e:
+        logger.error(f"Entity clustering error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/vault/cleanup-orphan-entities")
+async def cleanup_orphan_entities(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    dry_run: bool = Query(True, description="미리보기 모드 (실제 삭제 안함)"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    고아 엔티티 정리
+
+    어떤 Note에도 연결되지 않은 (MENTIONS 관계가 없는) 엔티티를 정리합니다.
+    dry_run=True (기본값)면 삭제할 엔티티 목록만 반환합니다.
+    dry_run=False면 실제로 삭제합니다.
+
+    참고: 단일 노트 연결 엔티티는 삭제하지 않음 (나중에 커질 수 있음)
+    """
+    try:
+        # 고아 Entity 조회 (MENTIONS 관계가 전혀 없는)
+        cypher_orphan_entities = """
+        MATCH (e:Entity)
+        WHERE NOT (e)<-[:MENTIONS]-(:Note)
+          AND NOT (e)<-[:MENTIONS]-(:Episodic)
+        RETURN e.uuid as uuid, e.name as name
+        """
+        orphan_entities = client.query(cypher_orphan_entities, {})
+
+        if dry_run:
+            return {
+                "status": "preview",
+                "message": f"Found {len(orphan_entities or [])} orphan entities. Set dry_run=false to delete.",
+                "orphan_count": len(orphan_entities or []),
+                "sample_entities": [{"uuid": e["uuid"], "name": e["name"]} for e in (orphan_entities or [])[:50]]
+            }
+
+        # 실제 삭제 실행
+        cypher_cleanup_orphans = """
+        MATCH (e:Entity)
+        WHERE NOT (e)<-[:MENTIONS]-(:Note)
+          AND NOT (e)<-[:MENTIONS]-(:Episodic)
+        WITH e
+        OPTIONAL MATCH (e)-[r]-()
+        DELETE r, e
+        RETURN count(e) as count
+        """
+        cleanup_result = client.query(cypher_cleanup_orphans, {})
+        deleted_entities = cleanup_result[0]["count"] if cleanup_result else 0
+
+        logger.info(f"🧹 Cleaned up {deleted_entities} orphan entities")
+
+        return {
+            "status": "success",
+            "message": f"Cleaned up {deleted_entities} orphan entities",
+            "deleted_entities": deleted_entities
+        }
+
+    except Exception as e:
+        logger.error(f"Cleanup error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vault/entity-clusters/{cluster_id}")
+async def get_entity_cluster_detail(
+    cluster_id: str,
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    특정 클러스터의 상세 정보
+
+    클러스터 내 모든 엔티티와 내부 연결 관계를 반환합니다.
+    클러스터를 펼쳐서 상세 그래프를 보여줄 때 사용합니다.
+    """
+    try:
+        # 먼저 전체 클러스터 계산 (캐싱 필요)
+        clusters_data = compute_entity_clusters_hybrid(client=client)
+
+        detail = get_cluster_detail(client, cluster_id, clusters_data)
+
+        if not detail:
+            raise HTTPException(status_code=404, detail=f"Cluster {cluster_id} not found")
+
+        return {
+            "status": "success",
+            "cluster": detail
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Cluster detail error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

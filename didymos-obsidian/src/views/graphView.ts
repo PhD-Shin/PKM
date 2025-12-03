@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf, Plugin } from "obsidian";
 import { Network } from "vis-network";
 import { DidymosSettings } from "../settings";
-import { DidymosAPI, GraphData, ClusteredGraphData, StaleKnowledge, EntityGraphData } from "../api/client";
+import { DidymosAPI, GraphData, ClusteredGraphData, StaleKnowledge, EntityGraphData, EntityClusterData } from "../api/client";
 
 export const DIDYMOS_GRAPH_VIEW_TYPE = "didymos-graph-view";
 
@@ -21,7 +21,7 @@ export class DidymosGraphView extends ItemView {
   themePreset: "default" | "midnight" | "contrast" = "default";
   fontPreset: "normal" | "compact" | "large" = "normal";
   layoutSpacing: "regular" | "compact" = "regular";
-  viewMode: "note" | "vault" | "entity" = "entity";  // 기본값을 entity로 변경 (Knowledge Graph)
+  viewMode: "note" | "entity-clusters" = "entity-clusters";  // 2개 뷰만 (Note, 2nd Brain)
   enableClustering: boolean = true; // Vault 모드에서 클러스터링 활성화
   currentZoomLevel: "out" | "medium" | "in" = "out"; // Zoom 레벨 추적
   clusterMethod: "semantic" | "type_based" = "semantic"; // 클러스터링 방식 선택
@@ -71,46 +71,37 @@ export class DidymosGraphView extends ItemView {
     // Controls
     const controls = container.createEl("div", { cls: "didymos-graph-controls" });
 
-    // 모드 전환 버튼
+    // 모드 전환 버튼 (Note, 2nd Brain 2개만)
     const modeToggle = controls.createEl("div", { cls: "didymos-graph-mode-toggle" });
     const noteBtn = modeToggle.createEl("button", {
       text: "Note",
       cls: this.viewMode === "note" ? "active" : ""
     });
-    const entityBtn = modeToggle.createEl("button", {
-      text: "Entity",
-      cls: this.viewMode === "entity" ? "active" : ""
+    const brainBtn = modeToggle.createEl("button", {
+      text: "2nd Brain",
+      cls: this.viewMode === "entity-clusters" ? "active" : ""
     });
-    const vaultBtn = modeToggle.createEl("button", {
-      text: "Cluster",
-      cls: this.viewMode === "vault" ? "active" : ""
-    });
+
+    const clearActiveButtons = () => {
+      noteBtn.removeClass("active");
+      brainBtn.removeClass("active");
+    };
 
     noteBtn.addEventListener("click", async () => {
       this.viewMode = "note";
+      clearActiveButtons();
       noteBtn.addClass("active");
-      entityBtn.removeClass("active");
-      vaultBtn.removeClass("active");
       const active = this.app.workspace.getActiveFile();
       if (active) {
         await this.renderGraph(active.path);
       }
     });
 
-    entityBtn.addEventListener("click", async () => {
-      this.viewMode = "entity";
-      entityBtn.addClass("active");
-      noteBtn.removeClass("active");
-      vaultBtn.removeClass("active");
-      await this.renderEntityGraph();
-    });
-
-    vaultBtn.addEventListener("click", async () => {
-      this.viewMode = "vault";
-      vaultBtn.addClass("active");
-      noteBtn.removeClass("active");
-      entityBtn.removeClass("active");
-      await this.renderVaultGraph();
+    brainBtn.addEventListener("click", async () => {
+      this.viewMode = "entity-clusters";
+      clearActiveButtons();
+      brainBtn.addClass("active");
+      await this.renderEntityClustersGraph();
     });
 
     // Sync All Notes 버튼 (Cancel 기능 포함)
@@ -177,18 +168,7 @@ export class DidymosGraphView extends ItemView {
       await this.toggleStaleKnowledgePanel();
     });
 
-    // LLM Summary 토글 (비용 제어)
-    const llmToggle = controls.createEl("label", { cls: "didymos-graph-toggle" });
-    const llmCheckbox = llmToggle.createEl("input", { type: "checkbox" });
-    llmCheckbox.checked = this.includeClusterLLM;
-    llmToggle.createSpan({ text: "LLM Summary" });
-    llmCheckbox.addEventListener("change", async () => {
-      this.includeClusterLLM = llmCheckbox.checked;
-      this.clusterForceRecompute = true;
-      if (this.viewMode === "vault") {
-        await this.renderVaultGraph();
-      }
-    });
+    // LLM Summary 토글 - 현재 사용하지 않음 (Entity Clusters는 LLM 불필요)
 
     // 폴더 필터 컨트롤 (PARA 노트 기법 지원)
     const folderControls = controls.createEl("div", { cls: "didymos-folder-controls" });
@@ -233,11 +213,9 @@ export class DidymosGraphView extends ItemView {
       cls: "didymos-graph-empty",
     });
 
-    // 초기 뷰 모드에 따라 그래프 로드
-    if (this.viewMode === "entity") {
-      await this.renderEntityGraph();
-    } else if (this.viewMode === "vault") {
-      await this.renderVaultGraph();
+    // 초기 뷰 모드에 따라 그래프 로드 (Note, 2nd Brain 2가지만)
+    if (this.viewMode === "entity-clusters") {
+      await this.renderEntityClustersGraph();
     } else {
       // Note 모드인 경우 현재 활성 노트로 초기화
       const active = this.app.workspace.getActiveFile();
@@ -380,10 +358,9 @@ export class DidymosGraphView extends ItemView {
         button.removeClass("syncing");
       }, 3000);
 
-      // 그래프 새로고침
-      if (this.viewMode === "vault") {
-        this.clusterForceRecompute = true;
-        await this.renderVaultGraph();
+      // 그래프 새로고침 (2nd Brain 모드일 때)
+      if (this.viewMode === "entity-clusters") {
+        await this.renderEntityClustersGraph();
       }
 
     } catch (error: any) {
@@ -524,9 +501,9 @@ export class DidymosGraphView extends ItemView {
         button.removeClass("syncing");
       }, 3000);
 
-      // Vault 모드면 그래프 다시 렌더링
-      if (this.viewMode === "vault") {
-        await this.renderVaultGraph();
+      // 2nd Brain 모드면 그래프 다시 렌더링
+      if (this.viewMode === "entity-clusters") {
+        await this.renderEntityClustersGraph();
       }
 
     } catch (error: any) {
@@ -569,10 +546,9 @@ export class DidymosGraphView extends ItemView {
         button.removeAttribute("disabled");
       }, 3000);
 
-      // Vault 모드면 그래프 다시 렌더링
-      if (this.viewMode === "vault") {
-        this.clusterForceRecompute = true;
-        await this.renderVaultGraph();
+      // 2nd Brain 모드면 그래프 다시 렌더링
+      if (this.viewMode === "entity-clusters") {
+        await this.renderEntityClustersGraph();
       }
 
     } catch (error: any) {
@@ -628,7 +604,12 @@ export class DidymosGraphView extends ItemView {
           this.folderSelectEl?.querySelectorAll("input[type='checkbox']").forEach((cb: HTMLInputElement) => {
             if (cb !== allCheckbox) cb.checked = false;
           });
-          await this.renderVaultGraph();
+          // 2nd Brain 모드면 Entity Clusters, 아니면 Vault Graph
+          if (this.viewMode === "entity-clusters") {
+            await this.renderEntityClustersGraph();
+          } else {
+            await this.renderVaultGraph();
+          }
         }
       });
 
@@ -652,7 +633,12 @@ export class DidymosGraphView extends ItemView {
               allCheckbox.checked = true;
             }
           }
-          await this.renderVaultGraph();
+          // 2nd Brain 모드면 Entity Clusters, 아니면 Vault Graph
+          if (this.viewMode === "entity-clusters") {
+            await this.renderEntityClustersGraph();
+          } else {
+            await this.renderVaultGraph();
+          }
         });
       }
 
@@ -865,6 +851,505 @@ export class DidymosGraphView extends ItemView {
         }
       }
     });
+  }
+
+  /**
+   * Entity Clusters Graph - 하이브리드 클러스터링 (Graph + Embedding)
+   * 2nd Brain 시각화: 시멘틱하게 유사한 Entity들을 그룹으로 표시
+   */
+  async renderEntityClustersGraph() {
+    const graphContainer = this.containerEl.querySelector(
+      "#didymos-graph-network"
+    ) as HTMLElement;
+
+    if (!graphContainer) return;
+
+    graphContainer.empty();
+
+    if (this.clusterStatusEl) {
+      this.clusterStatusEl.setText("Entity Clusters (loading...)");
+    }
+
+    try {
+      graphContainer.createEl("div", {
+        text: "Loading 2nd Brain clusters...",
+        cls: "didymos-graph-loading",
+      });
+
+      // 선택된 폴더가 있으면 폴더 필터 적용
+      const folderPrefix = this.selectedFolders.length > 0 ? this.selectedFolders[0] + "/" : undefined;
+
+      // Entity Clusters API 호출
+      const clusterData: EntityClusterData = await this.api.fetchEntityClusters(
+        this.settings.vaultId,
+        {
+          minClusterSize: 3,
+          resolution: 1.0,
+          folderPrefix: folderPrefix
+        }
+      );
+
+      if (this.clusterStatusEl) {
+        const folderInfo = folderPrefix ? ` • Folder: ${this.selectedFolders[0]}` : "";
+        this.clusterStatusEl.setText(
+          `2nd Brain: ${clusterData.cluster_count} clusters, ${clusterData.total_entities} entities • Method: ${clusterData.method}${folderInfo}`
+        );
+      }
+
+      console.log(`✅ Entity clusters loaded: ${clusterData.cluster_count} clusters, ${clusterData.total_entities} entities`);
+
+      if (clusterData.cluster_count === 0) {
+        graphContainer.empty();
+        graphContainer.createEl("div", {
+          text: "No entity clusters found. Try syncing some notes first.",
+          cls: "didymos-graph-empty",
+        });
+        return;
+      }
+
+      // 클러스터를 vis-network 노드로 변환
+      const clusterNodes = clusterData.clusters.map(cluster => {
+        const typeInfo = Object.entries(cluster.type_distribution)
+          .map(([type, count]) => `${type}: ${count}`)
+          .join(", ");
+
+        const samples = cluster.sample_entities && cluster.sample_entities.length > 0
+          ? cluster.sample_entities.slice(0, 5).join(", ")
+          : "-";
+
+        // 클러스터 크기에 따른 노드 크기
+        const nodeSize = Math.min(60, 20 + Math.sqrt(cluster.entity_count) * 5);
+
+        // 타입 분포에 따른 색상
+        const dominantType = Object.entries(cluster.type_distribution)
+          .sort((a, b) => b[1] - a[1])[0]?.[0] || "Topic";
+
+        const typeColors: Record<string, string> = {
+          Topic: "#3498db",
+          Project: "#2ecc71",
+          Person: "#e67e22",
+          Task: "#e74c3c"
+        };
+
+        return {
+          id: cluster.id,
+          label: `${cluster.name}\n(${cluster.entity_count})`,
+          shape: 'dot',
+          size: nodeSize,
+          color: {
+            background: typeColors[dominantType] || "#666666",
+            border: this.darkenColor(typeColors[dominantType] || "#666666", 0.3),
+            highlight: {
+              background: this.lightenColor(typeColors[dominantType] || "#666666", 0.2),
+              border: typeColors[dominantType] || "#666666"
+            }
+          },
+          font: {
+            size: 14,
+            color: '#333333',
+            strokeWidth: 3,
+            strokeColor: '#ffffff'
+          },
+          title: `📦 ${cluster.name}\n\n` +
+            `Entities: ${cluster.entity_count}\n` +
+            `Types: ${typeInfo}\n` +
+            `Cohesion: ${(cluster.cohesion_score * 100).toFixed(0)}%\n\n` +
+            `Samples: ${samples}`,
+          group: dominantType,
+          cluster_data: cluster
+        };
+      });
+
+      // 클러스터 간 엣지를 vis-network 엣지로 변환
+      const clusterEdges = clusterData.edges.map((edge, idx) => ({
+        id: `edge_${idx}`,
+        from: edge.from,
+        to: edge.to,
+        width: Math.min(5, Math.max(1, Math.log2(edge.weight + 1) * 1.5)),
+        color: {
+          color: '#888888',
+          highlight: '#333333',
+          opacity: 0.6
+        },
+        smooth: { enabled: true, type: 'continuous', roundness: 0.3 } as any,
+        title: `${edge.weight} shared connections`,
+        label: '',
+        arrows: {}
+      }));
+
+      const graphData: GraphData = {
+        nodes: clusterNodes,
+        edges: clusterEdges
+      };
+
+      this.renderEntityClusterNetwork(graphContainer, graphData);
+
+    } catch (error) {
+      console.error("Failed to load entity clusters:", error);
+      graphContainer.empty();
+      graphContainer.createEl("div", {
+        text: `Failed to load entity clusters: ${error}`,
+        cls: "didymos-graph-error",
+      });
+    }
+  }
+
+  /**
+   * Entity Cluster Network 전용 vis-network 렌더링
+   */
+  renderEntityClusterNetwork(container: HTMLElement, graphData: GraphData) {
+    container.empty();
+
+    const networkContainer = container.createEl("div", {
+      cls: "didymos-network-container",
+    });
+    networkContainer.style.height = "100%";
+    networkContainer.style.width = "100%";
+
+    const options = {
+      nodes: {
+        shape: 'dot',
+        scaling: {
+          min: 20,
+          max: 60
+        },
+        font: {
+          size: 14,
+          face: 'Tahoma'
+        }
+      },
+      edges: {
+        smooth: {
+          enabled: true,
+          type: 'continuous',
+          roundness: 0.3
+        } as any
+      },
+      physics: {
+        enabled: true,
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {
+          gravitationalConstant: -80,
+          centralGravity: 0.01,
+          springLength: 150,
+          springConstant: 0.05,
+          damping: 0.4
+        },
+        stabilization: {
+          enabled: true,
+          iterations: 300,
+          updateInterval: 25
+        }
+      },
+      interaction: {
+        hover: true,
+        tooltipDelay: 100,
+        navigationButtons: true,
+        keyboard: true,
+        zoomView: true
+      },
+      groups: {
+        Topic: { color: { background: '#3498db', border: '#2980b9' } },
+        Project: { color: { background: '#2ecc71', border: '#27ae60' } },
+        Person: { color: { background: '#e67e22', border: '#d35400' } },
+        Task: { color: { background: '#e74c3c', border: '#c0392b' } }
+      }
+    };
+
+    if (this.network) {
+      this.network.destroy();
+    }
+
+    this.network = new Network(
+      networkContainer,
+      { nodes: graphData.nodes, edges: graphData.edges },
+      options
+    );
+
+    // 클러스터 클릭 이벤트 - 상세 정보 표시
+    this.network.on("click", (params) => {
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        const node = graphData.nodes.find(n => n.id === nodeId);
+
+        if (node && (node as any).cluster_data) {
+          this.showEntityClusterDetails((node as any).cluster_data);
+        }
+      }
+    });
+
+    // 더블클릭: 클러스터 펼치기 (해당 클러스터의 엔티티들만 표시)
+    this.network.on("doubleClick", async (params) => {
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        const node = graphData.nodes.find(n => n.id === nodeId);
+
+        if (node && (node as any).cluster_data) {
+          // 클러스터 상세 정보를 가져와서 해당 클러스터의 엔티티들만 표시
+          await this.renderClusterEntitiesGraph((node as any).cluster_data);
+        }
+      }
+    });
+  }
+
+  /**
+   * 클러스터의 엔티티들을 그래프로 표시 (드릴다운 뷰)
+   */
+  async renderClusterEntitiesGraph(clusterData: any) {
+    const graphContainer = this.containerEl.querySelector(
+      "#didymos-graph-network"
+    ) as HTMLElement;
+
+    if (!graphContainer) return;
+
+    graphContainer.empty();
+
+    if (this.clusterStatusEl) {
+      this.clusterStatusEl.setText(`Cluster: ${clusterData.name} (loading entities...)`);
+    }
+
+    try {
+      graphContainer.createEl("div", {
+        text: `Loading entities for "${clusterData.name}"...`,
+        cls: "didymos-graph-loading",
+      });
+
+      // 클러스터 상세 정보 가져오기 (엔티티 목록 포함)
+      const detailResponse = await this.api.fetchEntityClusterDetail(
+        this.settings.vaultId,
+        clusterData.id
+      );
+
+      const detail = detailResponse.cluster;
+
+      if (this.clusterStatusEl) {
+        this.clusterStatusEl.setText(
+          `Cluster: ${detail.name} • ${detail.entity_count} entities • ${detail.internal_edges.length} connections`
+        );
+      }
+
+      if (!detail.entities || detail.entities.length === 0) {
+        graphContainer.empty();
+        graphContainer.createEl("div", {
+          text: "No entity details available for this cluster.",
+          cls: "didymos-graph-empty",
+        });
+        return;
+      }
+
+      // 타입별 색상
+      const typeColors: Record<string, string> = {
+        Topic: "#3498db",
+        Project: "#2ecc71",
+        Person: "#e67e22",
+        Task: "#e74c3c"
+      };
+
+      // 엔티티를 vis-network 노드로 변환
+      const entityNodes = detail.entities.map(entity => ({
+        id: entity.uuid,
+        label: entity.name,
+        shape: 'dot',
+        size: 15 + Math.min(25, entity.connections * 2),
+        color: {
+          background: typeColors[entity.pkm_type] || "#666666",
+          border: this.darkenColor(typeColors[entity.pkm_type] || "#666666", 0.3),
+          highlight: {
+            background: this.lightenColor(typeColors[entity.pkm_type] || "#666666", 0.2),
+            border: typeColors[entity.pkm_type] || "#666666"
+          }
+        },
+        font: {
+          size: 12,
+          color: '#333333',
+          strokeWidth: 2,
+          strokeColor: '#ffffff'
+        },
+        title: `${entity.name}\n\nType: ${entity.pkm_type}\nConnections: ${entity.connections}${entity.summary ? `\n\n${entity.summary}` : ''}`,
+        group: entity.pkm_type,
+        entity_data: entity
+      }));
+
+      // 내부 엣지를 vis-network 엣지로 변환
+      const entityEdges = detail.internal_edges.map((edge, idx) => ({
+        id: `edge_${idx}`,
+        from: edge.from,
+        to: edge.to,
+        label: '',
+        arrows: {},
+        color: {
+          color: '#cccccc',
+          highlight: '#666666',
+          opacity: 0.6
+        },
+        width: Math.max(1, edge.weight),
+        smooth: { enabled: true, type: 'continuous', roundness: 0.5 } as any,
+        title: edge.fact || ''
+      }));
+
+      const graphData: GraphData = {
+        nodes: entityNodes,
+        edges: entityEdges
+      };
+
+      this.renderClusterEntitiesNetwork(graphContainer, graphData, detail.name);
+
+    } catch (error) {
+      console.error("Failed to load cluster entities:", error);
+      graphContainer.empty();
+      graphContainer.createEl("div", {
+        text: `Failed to load cluster entities: ${error}`,
+        cls: "didymos-graph-error",
+      });
+    }
+  }
+
+  /**
+   * 클러스터 엔티티 네트워크 렌더링
+   */
+  renderClusterEntitiesNetwork(container: HTMLElement, graphData: GraphData, clusterName: string) {
+    container.empty();
+
+    // 뒤로가기 버튼
+    const backBtn = container.createEl("button", {
+      text: "← Back to Clusters",
+      cls: "didymos-back-btn"
+    });
+    backBtn.style.marginBottom = "10px";
+    backBtn.addEventListener("click", async () => {
+      await this.renderEntityClustersGraph();
+    });
+
+    const networkContainer = container.createEl("div", {
+      cls: "didymos-network-container",
+    });
+    networkContainer.style.height = "calc(100% - 40px)";
+    networkContainer.style.width = "100%";
+
+    const options = {
+      nodes: {
+        shape: 'dot',
+        scaling: {
+          min: 15,
+          max: 40
+        },
+        font: {
+          size: 12,
+          face: 'Tahoma'
+        }
+      },
+      edges: {
+        smooth: {
+          enabled: true,
+          type: 'continuous',
+          roundness: 0.5
+        } as any
+      },
+      physics: {
+        enabled: true,
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {
+          gravitationalConstant: -50,
+          centralGravity: 0.01,
+          springLength: 80,
+          springConstant: 0.1,
+          damping: 0.4
+        },
+        stabilization: {
+          enabled: true,
+          iterations: 200,
+          updateInterval: 25
+        }
+      },
+      interaction: {
+        hover: true,
+        tooltipDelay: 100,
+        navigationButtons: true,
+        keyboard: true,
+        zoomView: true
+      },
+      groups: {
+        Topic: { color: { background: '#3498db', border: '#2980b9' } },
+        Project: { color: { background: '#2ecc71', border: '#27ae60' } },
+        Person: { color: { background: '#e67e22', border: '#d35400' } },
+        Task: { color: { background: '#e74c3c', border: '#c0392b' } }
+      }
+    };
+
+    if (this.network) {
+      this.network.destroy();
+    }
+
+    this.network = new Network(
+      networkContainer,
+      { nodes: graphData.nodes, edges: graphData.edges },
+      options
+    );
+
+    // 노드 클릭 이벤트 - 상세 정보 표시
+    this.network.on("click", (params) => {
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        const node = graphData.nodes.find(n => n.id === nodeId);
+        if (node && (node as any).entity_data) {
+          console.log("Entity clicked:", (node as any).entity_data);
+        }
+      }
+    });
+  }
+
+  /**
+   * Entity Cluster 상세 정보 표시
+   */
+  private showEntityClusterDetails(clusterData: any) {
+    if (this.clusterDetailEl) {
+      this.clusterDetailEl.remove();
+    }
+
+    const container = this.containerEl.querySelector(".didymos-graph-container") as HTMLElement;
+    const detail = container.createEl("div", { cls: "didymos-cluster-detail" });
+    this.clusterDetailEl = detail;
+
+    const header = detail.createEl("div", { cls: "didymos-cluster-detail__header" });
+    header.createEl("h3", { text: `🧠 ${clusterData.name}` });
+    const closeBtn = header.createEl("button", { text: "Close" });
+    closeBtn.addEventListener("click", () => {
+      detail.remove();
+      this.clusterDetailEl = null;
+    });
+
+    const meta = detail.createEl("div", { cls: "didymos-cluster-detail__meta" });
+    meta.createSpan({ text: `Entities: ${clusterData.entity_count}` });
+    meta.createSpan({ text: `Cohesion: ${(clusterData.cohesion_score * 100).toFixed(0)}%` });
+    meta.createSpan({ text: `Internal Edges: ${clusterData.internal_edges}` });
+
+    // 타입 분포
+    const typesWrap = detail.createEl("div", { cls: "didymos-cluster-detail__types" });
+    typesWrap.createEl("h4", { text: "타입 분포" });
+    const typeList = typesWrap.createEl("div", { cls: "type-badges" });
+    for (const [type, count] of Object.entries(clusterData.type_distribution || {})) {
+      typeList.createEl("span", {
+        text: `${type}: ${count}`,
+        cls: `type-badge type-${type.toLowerCase()}`
+      });
+    }
+
+    // 샘플 엔티티
+    const samplesWrap = detail.createEl("div", { cls: "didymos-cluster-detail__samples" });
+    samplesWrap.createEl("h4", { text: "포함된 엔티티" });
+    const sampleEntities = clusterData.sample_entities || [];
+    if (sampleEntities.length > 0) {
+      const list = samplesWrap.createEl("ul");
+      sampleEntities.forEach((name: string) => {
+        list.createEl("li", { text: name });
+      });
+    } else {
+      samplesWrap.createEl("p", { text: "-" });
+    }
+
+    // 힌트
+    const hint = detail.createEl("div", { cls: "didymos-cluster-detail__hint" });
+    hint.createSpan({ text: "Tip: Double-click the cluster to view its entities" });
   }
 
   // 색상 유틸리티 함수들
