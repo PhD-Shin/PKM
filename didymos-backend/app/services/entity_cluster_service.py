@@ -240,7 +240,8 @@ def cluster_by_pkm_type(
     - Question: 탐구할 질문
     - Insight: 통찰/발견
     - Resource: 참고 자료
-    - Person: 사람 (추가)
+
+    Note: Person은 Topic(3)으로 매핑됨 (하위 호환성)
 
     Args:
         entities: 엔티티 리스트
@@ -248,7 +249,7 @@ def cluster_by_pkm_type(
     Returns:
         {entity_uuid: cluster_id}
     """
-    # PKM Core 8 Types + Person
+    # PKM Core 8 Types (Person은 Topic으로 매핑)
     type_to_cluster = {
         "Goal": 0,
         "Project": 1,
@@ -258,7 +259,7 @@ def cluster_by_pkm_type(
         "Question": 5,
         "Insight": 6,
         "Resource": 7,
-        "Person": 8
+        "Person": 3  # Person은 Topic으로 분류
     }
 
     return {
@@ -472,7 +473,7 @@ def compute_entity_clusters_hybrid(
     folder_info = f" for folder '{folder_prefix}'" if folder_prefix else ""
     logger.info(f"Starting PKM Type entity clustering{folder_info} (min_connections={min_connections})...")
 
-    # PKM Core 8 Types + Person 정의
+    # PKM Core 8 Types 정의 (Person은 별도 처리)
     PKM_TYPES = {
         0: {"id": "Goal", "name": "🎯 Goal", "description": "장기 목표"},
         1: {"id": "Project", "name": "📁 Project", "description": "진행 중인 프로젝트"},
@@ -481,8 +482,7 @@ def compute_entity_clusters_hybrid(
         4: {"id": "Concept", "name": "💡 Concept", "description": "개념/아이디어"},
         5: {"id": "Question", "name": "❓ Question", "description": "탐구할 질문"},
         6: {"id": "Insight", "name": "✨ Insight", "description": "통찰/발견"},
-        7: {"id": "Resource", "name": "📎 Resource", "description": "참고 자료"},
-        8: {"id": "Person", "name": "👤 Person", "description": "사람"}
+        7: {"id": "Resource", "name": "📎 Resource", "description": "참고 자료"}
     }
 
     try:
@@ -523,11 +523,10 @@ def compute_entity_clusters_hybrid(
         for uuid, cluster_id in pkm_clusters.items():
             cluster_groups[cluster_id].append(uuid)
 
-        # 클러스터 정보 생성 (PKM Type별)
+        # 클러스터 정보 생성 (PKM 8 Core Type 모두 표시)
         clusters = []
-        for cluster_id, uuids in sorted(cluster_groups.items()):
-            if len(uuids) == 0:
-                continue  # 빈 클러스터 스킵
+        for cluster_id in range(8):  # 0-7: 8개 Core Type (Person 제외)
+            uuids = cluster_groups.get(cluster_id, [])
 
             # PKM Type 정보
             type_info = PKM_TYPES.get(cluster_id, {"id": "Topic", "name": "📚 Topic", "description": "주제"})
@@ -562,9 +561,8 @@ def compute_entity_clusters_hybrid(
                 "computed_at": datetime.utcnow().isoformat()
             })
 
-        # 생산성 흐름 순서로 정렬: Goal → Project → Task → Topic → Concept → Question → Insight → Resource → Person
-        type_order = {"Goal": 0, "Project": 1, "Task": 2, "Topic": 3, "Concept": 4, "Question": 5, "Insight": 6, "Resource": 7, "Person": 8}
-        clusters.sort(key=lambda c: type_order.get(c.get("pkm_type", "Topic"), 99))
+        # 생산성 흐름 순서로 정렬: Goal → Project → Task → Topic → Concept → Question → Insight → Resource
+        # (이미 range(8) 순서대로 생성됨, 정렬 불필요)
 
         # 클러스터 간 엣지 계산 (공유 RELATES_TO)
         cluster_edges = _compute_cluster_edges(clusters, relates_to_edges)
