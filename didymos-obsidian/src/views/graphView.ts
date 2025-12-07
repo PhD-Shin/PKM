@@ -1,7 +1,7 @@
-import { ItemView, WorkspaceLeaf, Plugin } from "obsidian";
+import { ItemView, WorkspaceLeaf, Plugin, TFile, Notice } from "obsidian";
 import { Network } from "vis-network";
 import { DidymosSettings } from "../settings";
-import { DidymosAPI, GraphData, ClusteredGraphData, StaleKnowledge, EntityGraphData, EntityClusterData } from "../api/client";
+import { DidymosAPI, GraphData, ClusteredGraphData, StaleKnowledge, EntityGraphData, EntityClusterData, EntityNoteGraphData, ThinkingInsightsData } from "../api/client";
 
 export const DIDYMOS_GRAPH_VIEW_TYPE = "didymos-graph-view";
 
@@ -34,6 +34,11 @@ export class DidymosGraphView extends ItemView {
   folderSelectEl: HTMLElement | null = null;
   staleKnowledgePanelEl: HTMLElement | null = null;  // 잊혀진 지식 패널
   staleKnowledgeData: StaleKnowledge[] = [];
+  insightsPanelEl: HTMLElement | null = null;  // Thinking Insights 패널
+  insightsData: ThinkingInsightsData | null = null;
+  insightsCache: { data: ThinkingInsightsData; timestamp: number } | null = null;
+  insightsCacheTTL: number = 5 * 60 * 1000;  // 5분 캐시
+  // brainViewMode 제거됨 - 2nd Brain은 Clusters 뷰만 사용
   // Sync cancellation
   syncAbortController: AbortController | null = null;
   isSyncing: boolean = false;
@@ -168,7 +173,19 @@ export class DidymosGraphView extends ItemView {
       await this.toggleStaleKnowledgePanel();
     });
 
-    // LLM Summary 토글 - 현재 사용하지 않음 (Entity Clusters는 LLM 불필요)
+    // Thinking Insights 버튼 (Palantir Foundry 스타일)
+    const insightsBtn = controls.createEl("button", {
+      text: "Insights",
+      cls: "didymos-sync-btn didymos-insights-btn"
+    });
+    insightsBtn.style.backgroundColor = "#9b59b6";
+    insightsBtn.style.color = "white";
+
+    insightsBtn.addEventListener("click", async () => {
+      await this.toggleInsightsPanel();
+    });
+
+    // Note: Entity-Note Graph 토글 제거됨 (2nd Brain은 Clusters 뷰만 사용)
 
     // 폴더 필터 컨트롤 (PARA 노트 기법 지원)
     const folderControls = controls.createEl("div", { cls: "didymos-folder-controls" });
@@ -820,10 +837,15 @@ export class DidymosGraphView extends ItemView {
         zoomView: true
       },
       groups: {
-        Topic: { color: { background: '#3498db', border: '#2980b9' } },
+        Goal: { color: { background: '#9b59b6', border: '#8e44ad' } },
         Project: { color: { background: '#2ecc71', border: '#27ae60' } },
-        Person: { color: { background: '#e67e22', border: '#d35400' } },
-        Task: { color: { background: '#e74c3c', border: '#c0392b' } }
+        Task: { color: { background: '#e74c3c', border: '#c0392b' } },
+        Topic: { color: { background: '#3498db', border: '#2980b9' } },
+        Concept: { color: { background: '#1abc9c', border: '#16a085' } },
+        Question: { color: { background: '#f39c12', border: '#d68910' } },
+        Insight: { color: { background: '#e91e63', border: '#c2185b' } },
+        Resource: { color: { background: '#607d8b', border: '#455a64' } },
+        Person: { color: { background: '#e67e22', border: '#d35400' } }
       }
     };
 
@@ -925,10 +947,15 @@ export class DidymosGraphView extends ItemView {
           .sort((a, b) => b[1] - a[1])[0]?.[0] || "Topic";
 
         const typeColors: Record<string, string> = {
-          Topic: "#3498db",
+          Goal: "#9b59b6",
           Project: "#2ecc71",
-          Person: "#e67e22",
-          Task: "#e74c3c"
+          Task: "#e74c3c",
+          Topic: "#3498db",
+          Concept: "#1abc9c",
+          Question: "#f39c12",
+          Insight: "#e91e63",
+          Resource: "#607d8b",
+          Person: "#e67e22"
         };
 
         return {
@@ -1049,10 +1076,15 @@ export class DidymosGraphView extends ItemView {
         zoomView: true
       },
       groups: {
-        Topic: { color: { background: '#3498db', border: '#2980b9' } },
+        Goal: { color: { background: '#9b59b6', border: '#8e44ad' } },
         Project: { color: { background: '#2ecc71', border: '#27ae60' } },
-        Person: { color: { background: '#e67e22', border: '#d35400' } },
-        Task: { color: { background: '#e74c3c', border: '#c0392b' } }
+        Task: { color: { background: '#e74c3c', border: '#c0392b' } },
+        Topic: { color: { background: '#3498db', border: '#2980b9' } },
+        Concept: { color: { background: '#1abc9c', border: '#16a085' } },
+        Question: { color: { background: '#f39c12', border: '#d68910' } },
+        Insight: { color: { background: '#e91e63', border: '#c2185b' } },
+        Resource: { color: { background: '#607d8b', border: '#455a64' } },
+        Person: { color: { background: '#e67e22', border: '#d35400' } }
       }
     };
 
@@ -1115,9 +1147,11 @@ export class DidymosGraphView extends ItemView {
       });
 
       // 클러스터 상세 정보 가져오기 (엔티티 목록 포함)
+      // entity_uuids를 직접 전달하여 정확한 클러스터 멤버십 보장
       const detailResponse = await this.api.fetchEntityClusterDetail(
         this.settings.vaultId,
-        clusterData.id
+        clusterData.name,
+        clusterData.entity_uuids || []
       );
 
       const detail = detailResponse.cluster;
@@ -1139,10 +1173,15 @@ export class DidymosGraphView extends ItemView {
 
       // 타입별 색상
       const typeColors: Record<string, string> = {
-        Topic: "#3498db",
+        Goal: "#9b59b6",
         Project: "#2ecc71",
-        Person: "#e67e22",
-        Task: "#e74c3c"
+        Task: "#e74c3c",
+        Topic: "#3498db",
+        Concept: "#1abc9c",
+        Question: "#f39c12",
+        Insight: "#e91e63",
+        Resource: "#607d8b",
+        Person: "#e67e22"
       };
 
       // 엔티티를 vis-network 노드로 변환
@@ -1170,29 +1209,42 @@ export class DidymosGraphView extends ItemView {
         entity_data: entity
       }));
 
+      // 관계 타입별 스타일
+      const relTypeStyles: Record<string, { color: string; dashes: boolean; arrows: string; label: string }> = {
+        BROADER: { color: '#9b59b6', dashes: false, arrows: 'to', label: 'broader' },
+        NARROWER: { color: '#1abc9c', dashes: false, arrows: 'to', label: 'narrower' },
+        RELATES_TO: { color: '#cccccc', dashes: false, arrows: '', label: '' }
+      };
+
       // 내부 엣지를 vis-network 엣지로 변환
-      const entityEdges = detail.internal_edges.map((edge, idx) => ({
-        id: `edge_${idx}`,
-        from: edge.from,
-        to: edge.to,
-        label: '',
-        arrows: {},
-        color: {
-          color: '#cccccc',
-          highlight: '#666666',
-          opacity: 0.6
-        },
-        width: Math.max(1, edge.weight),
-        smooth: { enabled: true, type: 'continuous', roundness: 0.5 } as any,
-        title: edge.fact || ''
-      }));
+      const entityEdges = detail.internal_edges.map((edge: any, idx: number) => {
+        const relType = edge.type || 'RELATES_TO';
+        const style = relTypeStyles[relType] || relTypeStyles.RELATES_TO;
+        return {
+          id: `edge_${idx}`,
+          from: edge.from,
+          to: edge.to,
+          label: style.label,
+          arrows: style.arrows ? { to: { enabled: true, scaleFactor: 0.8 } } : {},
+          color: {
+            color: style.color,
+            highlight: style.color,
+            opacity: 0.8
+          },
+          dashes: style.dashes,
+          width: Math.max(1, edge.weight || 1),
+          smooth: { enabled: true, type: 'continuous', roundness: 0.5 } as any,
+          title: edge.fact || `${relType}`,
+          font: { size: 9, color: '#666666', strokeWidth: 1, strokeColor: '#ffffff' }
+        };
+      });
 
       const graphData: GraphData = {
         nodes: entityNodes,
         edges: entityEdges
       };
 
-      this.renderClusterEntitiesNetwork(graphContainer, graphData, detail.name);
+      this.renderClusterEntitiesNetwork(graphContainer, graphData, detail.name, detail.related_notes || []);
 
     } catch (error) {
       console.error("Failed to load cluster entities:", error);
@@ -1207,24 +1259,107 @@ export class DidymosGraphView extends ItemView {
   /**
    * 클러스터 엔티티 네트워크 렌더링
    */
-  renderClusterEntitiesNetwork(container: HTMLElement, graphData: GraphData, clusterName: string) {
+  renderClusterEntitiesNetwork(container: HTMLElement, graphData: GraphData, clusterName: string, relatedNotes: any[] = []) {
     container.empty();
 
+    // 상단 컨트롤 영역
+    const controlBar = container.createEl("div", { cls: "didymos-cluster-control-bar" });
+    controlBar.style.display = "flex";
+    controlBar.style.justifyContent = "space-between";
+    controlBar.style.alignItems = "center";
+    controlBar.style.marginBottom = "10px";
+
     // 뒤로가기 버튼
-    const backBtn = container.createEl("button", {
+    const backBtn = controlBar.createEl("button", {
       text: "← Back to Clusters",
       cls: "didymos-back-btn"
     });
-    backBtn.style.marginBottom = "10px";
     backBtn.addEventListener("click", async () => {
       await this.renderEntityClustersGraph();
     });
 
-    const networkContainer = container.createEl("div", {
+    // 관계 타입 범례
+    const legend = controlBar.createEl("div", { cls: "didymos-relation-legend" });
+    legend.style.display = "flex";
+    legend.style.gap = "12px";
+    legend.style.fontSize = "11px";
+    legend.innerHTML = `
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:20px;height:2px;background:#9b59b6;display:inline-block;"></span>broader</span>
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:20px;height:2px;background:#1abc9c;display:inline-block;"></span>narrower</span>
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:20px;height:2px;background:#cccccc;display:inline-block;"></span>relates_to</span>
+    `;
+
+    // 메인 컨텐츠 영역 (그래프 + 관련 노트)
+    const mainContent = container.createEl("div", { cls: "didymos-cluster-main" });
+    mainContent.style.display = "flex";
+    mainContent.style.height = "calc(100% - 50px)";
+    mainContent.style.gap = "10px";
+
+    // 그래프 컨테이너
+    const networkContainer = mainContent.createEl("div", {
       cls: "didymos-network-container",
     });
-    networkContainer.style.height = "calc(100% - 40px)";
-    networkContainer.style.width = "100%";
+    networkContainer.style.flex = relatedNotes.length > 0 ? "1 1 65%" : "1 1 100%";
+    networkContainer.style.height = "100%";
+
+    // 관련 노트 패널
+    if (relatedNotes.length > 0) {
+      const notesPanel = mainContent.createEl("div", { cls: "didymos-related-notes-panel" });
+      notesPanel.style.flex = "0 0 35%";
+      notesPanel.style.height = "100%";
+      notesPanel.style.overflowY = "auto";
+      notesPanel.style.borderLeft = "1px solid var(--background-modifier-border)";
+      notesPanel.style.paddingLeft = "10px";
+
+      const notesHeader = notesPanel.createEl("div", { cls: "didymos-notes-header" });
+      notesHeader.style.display = "flex";
+      notesHeader.style.justifyContent = "space-between";
+      notesHeader.style.alignItems = "center";
+      notesHeader.style.marginBottom = "8px";
+      notesHeader.createEl("h4", { text: `Related Notes (${relatedNotes.length})` });
+
+      const notesList = notesPanel.createEl("div", { cls: "didymos-notes-list" });
+
+      relatedNotes.forEach((note: any) => {
+        const noteItem = notesList.createEl("div", { cls: "didymos-note-item" });
+        noteItem.style.padding = "8px";
+        noteItem.style.marginBottom = "6px";
+        noteItem.style.borderRadius = "6px";
+        noteItem.style.backgroundColor = "var(--background-secondary)";
+        noteItem.style.cursor = "pointer";
+        noteItem.style.transition = "background-color 0.2s";
+
+        noteItem.addEventListener("mouseenter", () => {
+          noteItem.style.backgroundColor = "var(--background-modifier-hover)";
+        });
+        noteItem.addEventListener("mouseleave", () => {
+          noteItem.style.backgroundColor = "var(--background-secondary)";
+        });
+
+        // 노트 제목
+        const title = noteItem.createEl("div", { cls: "note-title" });
+        title.style.fontWeight = "500";
+        title.style.marginBottom = "4px";
+        title.setText(note.title || note.note_id);
+
+        // 연결된 엔티티 수
+        const entityBadge = noteItem.createEl("div", { cls: "note-entities" });
+        entityBadge.style.fontSize = "11px";
+        entityBadge.style.color = "var(--text-muted)";
+        entityBadge.setText(`${note.entity_count} entities: ${(note.entity_names || []).slice(0, 3).join(", ")}${note.entity_count > 3 ? "..." : ""}`);
+
+        // 클릭 시 노트 열기
+        noteItem.addEventListener("click", async () => {
+          const path = note.path || note.note_id;
+          const file = this.app.vault.getAbstractFileByPath(path);
+          if (file && file instanceof TFile) {
+            await this.app.workspace.getLeaf(false).openFile(file);
+          } else {
+            new Notice(`Note not found: ${path}`);
+          }
+        });
+      });
+    }
 
     const options = {
       nodes: {
@@ -1269,10 +1404,15 @@ export class DidymosGraphView extends ItemView {
         zoomView: true
       },
       groups: {
-        Topic: { color: { background: '#3498db', border: '#2980b9' } },
+        Goal: { color: { background: '#9b59b6', border: '#8e44ad' } },
         Project: { color: { background: '#2ecc71', border: '#27ae60' } },
-        Person: { color: { background: '#e67e22', border: '#d35400' } },
-        Task: { color: { background: '#e74c3c', border: '#c0392b' } }
+        Task: { color: { background: '#e74c3c', border: '#c0392b' } },
+        Topic: { color: { background: '#3498db', border: '#2980b9' } },
+        Concept: { color: { background: '#1abc9c', border: '#16a085' } },
+        Question: { color: { background: '#f39c12', border: '#d68910' } },
+        Insight: { color: { background: '#e91e63', border: '#c2185b' } },
+        Resource: { color: { background: '#607d8b', border: '#455a64' } },
+        Person: { color: { background: '#e67e22', border: '#d35400' } }
       }
     };
 
@@ -2378,5 +2518,443 @@ export class DidymosGraphView extends ItemView {
     } catch (error) {
       console.error("Failed to mark all as reviewed:", error);
     }
+  }
+
+  // ============================================
+  // Thinking Insights (Palantir Foundry Style)
+  // ============================================
+
+  async toggleInsightsPanel() {
+    const container = this.containerEl.children[1] as HTMLElement;
+    if (!container) return;
+
+    // 패널이 이미 있으면 토글
+    if (this.insightsPanelEl) {
+      this.insightsPanelEl.remove();
+      this.insightsPanelEl = null;
+      return;
+    }
+
+    // 패널 생성
+    this.insightsPanelEl = container.createEl("div", {
+      cls: "didymos-insights-panel"
+    });
+
+    const panelHeader = this.insightsPanelEl.createEl("div", {
+      cls: "didymos-insights-panel__header"
+    });
+    panelHeader.createEl("h3", { text: "Thinking Insights" });
+
+    const closeBtn = panelHeader.createEl("button", { text: "✕" });
+    closeBtn.addEventListener("click", () => {
+      if (this.insightsPanelEl) {
+        this.insightsPanelEl.remove();
+        this.insightsPanelEl = null;
+      }
+    });
+
+    // 콘텐츠 영역
+    const contentEl = this.insightsPanelEl.createEl("div", {
+      cls: "didymos-insights-panel__content"
+    });
+    contentEl.createEl("p", { text: "Loading insights...", cls: "didymos-insights-loading" });
+
+    // 데이터 로드
+    await this.loadThinkingInsights();
+  }
+
+  async loadThinkingInsights(forceRefresh: boolean = false) {
+    if (!this.insightsPanelEl) return;
+
+    const contentEl = this.insightsPanelEl.querySelector(".didymos-insights-panel__content") as HTMLElement;
+    if (!contentEl) return;
+
+    try {
+      const folderPrefix = this.selectedFolders.length > 0 ? this.selectedFolders[0] + "/" : undefined;
+
+      // 캐시 확인 (5분 TTL)
+      const now = Date.now();
+      if (!forceRefresh && this.insightsCache && (now - this.insightsCache.timestamp) < this.insightsCacheTTL) {
+        this.insightsData = this.insightsCache.data;
+        console.log("Using cached insights data");
+      } else {
+        this.insightsData = await this.api.fetchThinkingInsights(this.settings.vaultId, { folderPrefix });
+        this.insightsCache = { data: this.insightsData, timestamp: now };
+        console.log("Fetched fresh insights data");
+      }
+
+      contentEl.empty();
+
+      // 0. Knowledge Health Score (상단에 눈에 띄게)
+      if (this.insightsData.health_score) {
+        const healthSection = contentEl.createEl("div", { cls: "didymos-insights-health" });
+        const healthHeader = healthSection.createEl("div", { cls: "health-header" });
+        healthHeader.createEl("h4", { text: "Knowledge Health" });
+
+        const score = this.insightsData.health_score.overall;
+        const scoreColor = score >= 70 ? "#2ecc71" : score >= 50 ? "#f39c12" : "#e74c3c";
+
+        const scoreDisplay = healthSection.createEl("div", { cls: "health-score-display" });
+        scoreDisplay.createEl("span", { text: `${score}`, cls: "score-number" });
+        scoreDisplay.style.color = scoreColor;
+        scoreDisplay.createEl("span", { text: "/100", cls: "score-max" });
+
+        const metrics = healthSection.createEl("div", { cls: "health-metrics" });
+        metrics.createEl("span", { text: `Density: ${(this.insightsData.health_score.connection_density * 100).toFixed(0)}%` });
+        metrics.createEl("span", { text: `Isolated: ${(this.insightsData.health_score.isolation_ratio * 100).toFixed(0)}%` });
+
+        if (this.insightsData.health_score.recommendations.length > 0) {
+          const recEl = healthSection.createEl("div", { cls: "health-recommendations" });
+          for (const rec of this.insightsData.health_score.recommendations.slice(0, 2)) {
+            recEl.createEl("p", { text: `💡 ${rec}`, cls: "recommendation" });
+          }
+        }
+      }
+
+      // 요약 통계
+      const summary = contentEl.createEl("div", { cls: "didymos-insights-summary" });
+      summary.createEl("span", { text: `Entities: ${this.insightsData.summary.total_entities}` });
+      summary.createEl("span", { text: `Focus: ${this.insightsData.summary.focus_count}` });
+      summary.createEl("span", { text: `Bridges: ${this.insightsData.summary.bridge_count}` });
+      summary.createEl("span", { text: `Isolated: ${this.insightsData.summary.isolated_count}` });
+
+      // 1. Time Trends (시간 기반 트렌드)
+      if (this.insightsData.time_trends) {
+        const trendsSection = contentEl.createEl("div", { cls: "didymos-insights-section trends" });
+        trendsSection.createEl("h4", { text: "Topic Trends (7d vs 30d)" });
+
+        // Emerging Topics (새로 등장)
+        if (this.insightsData.time_trends.emerging_topics.length > 0) {
+          const emergingEl = trendsSection.createEl("div", { cls: "trend-group emerging" });
+          emergingEl.createEl("span", { text: "🚀 Emerging: ", cls: "trend-label" });
+          emergingEl.createEl("span", {
+            text: this.insightsData.time_trends.emerging_topics.map(t => t.name).slice(0, 3).join(", "),
+            cls: "trend-topics"
+          });
+        }
+
+        // Growing Topics (성장 중)
+        if (this.insightsData.time_trends.recent_topics.length > 0) {
+          const growingEl = trendsSection.createEl("div", { cls: "trend-group growing" });
+          growingEl.createEl("span", { text: "📈 Growing: ", cls: "trend-label" });
+          growingEl.createEl("span", {
+            text: this.insightsData.time_trends.recent_topics.map(t => t.name).slice(0, 3).join(", "),
+            cls: "trend-topics"
+          });
+        }
+
+        // Declining Topics (감소 중)
+        if (this.insightsData.time_trends.declining_topics.length > 0) {
+          const decliningEl = trendsSection.createEl("div", { cls: "trend-group declining" });
+          decliningEl.createEl("span", { text: "📉 Declining: ", cls: "trend-label" });
+          decliningEl.createEl("span", {
+            text: this.insightsData.time_trends.declining_topics.map(t => t.name).slice(0, 3).join(", "),
+            cls: "trend-topics"
+          });
+        }
+      }
+
+      // 2. 집중 영역 (Focus Areas) - 클릭하면 노트 열기
+      const focusSection = contentEl.createEl("div", { cls: "didymos-insights-section" });
+      focusSection.createEl("h4", { text: "Focus Areas" });
+      focusSection.createEl("p", { text: "클릭하여 관련 노트 열기", cls: "section-desc" });
+
+      if (this.insightsData.focus_areas.length > 0) {
+        const focusList = focusSection.createEl("div", { cls: "didymos-insights-list" });
+        for (const area of this.insightsData.focus_areas.slice(0, 8)) {
+          const item = focusList.createEl("div", { cls: "didymos-insights-item focus clickable" });
+          item.createEl("span", { text: area.name, cls: "name" });
+          item.createEl("span", { text: `${area.strength}`, cls: "badge" });
+          item.createEl("span", { text: area.type, cls: `type-badge type-${area.type.toLowerCase()}` });
+
+          // 클릭 시 첫 번째 노트 열기
+          if (area.notes && area.notes.length > 0) {
+            item.style.cursor = "pointer";
+            item.addEventListener("click", () => {
+              const notePath = area.notes[0];
+              this.app.workspace.openLinkText(notePath, "");
+            });
+            item.title = `Click to open: ${area.notes[0]}`;
+          }
+        }
+      } else {
+        focusSection.createEl("p", { text: "No focus areas found", cls: "empty" });
+      }
+
+      // 3. 브릿지 개념 (Bridge Concepts)
+      const bridgeSection = contentEl.createEl("div", { cls: "didymos-insights-section" });
+      bridgeSection.createEl("h4", { text: "Bridge Concepts" });
+      bridgeSection.createEl("p", { text: "여러 영역을 연결하는 핵심 개념", cls: "section-desc" });
+
+      if (this.insightsData.bridge_concepts.length > 0) {
+        const bridgeList = bridgeSection.createEl("div", { cls: "didymos-insights-list" });
+        for (const bridge of this.insightsData.bridge_concepts.slice(0, 6)) {
+          const item = bridgeList.createEl("div", { cls: "didymos-insights-item bridge" });
+          item.createEl("span", { text: bridge.name, cls: "name" });
+          item.createEl("span", { text: `${bridge.connected_count} connections`, cls: "badge" });
+          if (bridge.connects.length > 0) {
+            item.createEl("span", { text: bridge.connects.slice(0, 3).join(", "), cls: "connects" });
+          }
+        }
+      } else {
+        bridgeSection.createEl("p", { text: "No bridge concepts found", cls: "empty" });
+      }
+
+      // 4. 고립된 영역 (Isolated Areas)
+      const isolatedSection = contentEl.createEl("div", { cls: "didymos-insights-section" });
+      isolatedSection.createEl("h4", { text: "Isolated Areas" });
+      isolatedSection.createEl("p", { text: "연결이 적은 주제 - 확장 기회!", cls: "section-desc" });
+
+      if (this.insightsData.isolated_areas.length > 0) {
+        const isolatedList = isolatedSection.createEl("div", { cls: "didymos-insights-list" });
+        for (const area of this.insightsData.isolated_areas.slice(0, 6)) {
+          const item = isolatedList.createEl("div", { cls: "didymos-insights-item isolated" });
+          item.createEl("span", { text: area.name, cls: "name" });
+          item.createEl("span", { text: area.suggestion, cls: "suggestion" });
+        }
+      } else {
+        isolatedSection.createEl("p", { text: "No isolated areas - great connectivity!", cls: "empty success" });
+      }
+
+      // 5. 탐구 제안 (Exploration Suggestions) - 액션 버튼 포함
+      if (this.insightsData.exploration_suggestions.length > 0) {
+        const exploreSection = contentEl.createEl("div", { cls: "didymos-insights-section" });
+        exploreSection.createEl("h4", { text: "Exploration Suggestions" });
+        exploreSection.createEl("p", { text: "연결 강화 가능성이 있는 영역", cls: "section-desc" });
+
+        const exploreList = exploreSection.createEl("div", { cls: "didymos-insights-list" });
+        for (const sugg of this.insightsData.exploration_suggestions) {
+          const item = exploreList.createEl("div", { cls: "didymos-insights-item explore" });
+          const textContent = item.createEl("div", { cls: "explore-content" });
+          textContent.createEl("span", { text: `${sugg.area1} ↔ ${sugg.area2}`, cls: "name" });
+          textContent.createEl("span", { text: sugg.reason, cls: "reason" });
+
+          // 액션 버튼: 연결 노트 작성
+          const actionBtn = item.createEl("button", {
+            text: "📝 Connect",
+            cls: "explore-action-btn"
+          });
+          actionBtn.title = "Create a note connecting these topics";
+          actionBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            // 새 노트 생성하여 두 영역 연결
+            const fileName = `${sugg.area1} + ${sugg.area2}.md`;
+            const content = `# ${sugg.area1} and ${sugg.area2}\n\n## Connection Ideas\n\n- ${sugg.reason}\n- \n\n## ${sugg.area1}\n\n\n## ${sugg.area2}\n\n\n## Synthesis\n\n`;
+
+            try {
+              const file = await this.app.vault.create(fileName, content);
+              await this.app.workspace.openLinkText(file.path, "");
+            } catch (error) {
+              console.error("Failed to create connection note:", error);
+            }
+          });
+        }
+      }
+
+      // 6. Refresh 버튼
+      const refreshSection = contentEl.createEl("div", { cls: "didymos-insights-refresh" });
+      const refreshBtn = refreshSection.createEl("button", { text: "🔄 Refresh Insights", cls: "refresh-btn" });
+      refreshBtn.addEventListener("click", async () => {
+        refreshBtn.disabled = true;
+        refreshBtn.setText("Loading...");
+        await this.loadThinkingInsights(true);  // 강제 새로고침
+      });
+
+    } catch (error) {
+      console.error("Failed to load thinking insights:", error);
+      contentEl.empty();
+      contentEl.createEl("p", {
+        text: "Failed to load insights",
+        cls: "didymos-insights-error"
+      });
+    }
+  }
+
+  // ============================================
+  // Entity-Note Graph (노트 간 연결 시각화)
+  // ============================================
+
+  async renderEntityNoteGraph() {
+    const graphContainer = this.containerEl.querySelector(
+      "#didymos-graph-network"
+    ) as HTMLElement;
+
+    if (!graphContainer) return;
+
+    graphContainer.empty();
+
+    if (this.clusterStatusEl) {
+      this.clusterStatusEl.setText("Entity-Note Graph (loading...)");
+    }
+
+    try {
+      graphContainer.createEl("div", {
+        text: "Loading entity-note connections...",
+        cls: "didymos-graph-loading",
+      });
+
+      const folderPrefix = this.selectedFolders.length > 0 ? this.selectedFolders[0] + "/" : undefined;
+
+      const data: EntityNoteGraphData = await this.api.fetchEntityNoteGraph(
+        this.settings.vaultId,
+        {
+          folderPrefix: folderPrefix,
+          limit: 100,
+          minNoteConnections: 2
+        }
+      );
+
+      if (this.clusterStatusEl) {
+        const folderInfo = folderPrefix ? ` • Folder: ${this.selectedFolders[0]}` : "";
+        this.clusterStatusEl.setText(
+          `Entity-Note: ${data.entity_count} entities, ${data.note_count} notes, ${data.edge_count} connections${folderInfo}`
+        );
+      }
+
+      if (data.entity_count === 0) {
+        graphContainer.empty();
+        graphContainer.createEl("div", {
+          text: "No entity-note connections found. Sync some notes first.",
+          cls: "didymos-graph-empty",
+        });
+        return;
+      }
+
+      // 노드 구성: Entity + Note
+      const typeColors: Record<string, string> = {
+        "Goal": "#9b59b6",
+        "Project": "#2ecc71",
+        "Task": "#e74c3c",
+        "Topic": "#3498db",
+        "Concept": "#1abc9c",
+        "Question": "#f39c12",
+        "Insight": "#e91e63",
+        "Resource": "#607d8b",
+        "Person": "#e67e22"
+      };
+
+      const entityNodes = data.entities.map(e => ({
+        id: `entity_${e.id}`,
+        label: e.name,
+        shape: 'dot',
+        size: 15 + Math.min(20, e.note_count * 3),
+        color: {
+          background: typeColors[e.type] || "#95a5a6",
+          border: this.darkenColor(typeColors[e.type] || "#95a5a6", 0.3)
+        },
+        font: { size: 12, color: '#333' },
+        title: `${e.name}\nType: ${e.type}\nNotes: ${e.note_count}`,
+        group: 'entity',
+        entity_data: e
+      }));
+
+      const noteNodes = data.notes.map(n => ({
+        id: `note_${n.id}`,
+        label: n.title.length > 20 ? n.title.substring(0, 20) + "..." : n.title,
+        shape: 'box',
+        size: 10,
+        color: {
+          background: '#f5f5f5',
+          border: '#bdbdbd'
+        },
+        font: { size: 10, color: '#555' },
+        title: n.title,
+        group: 'note',
+        note_data: n
+      }));
+
+      // 엣지: Note-Note 연결 (공유 Entity 기반)
+      const edges = data.note_note_edges.map((edge, idx) => ({
+        id: `edge_${idx}`,
+        from: `note_${edge.from}`,
+        to: `note_${edge.to}`,
+        label: '',
+        arrows: '' as any,
+        width: Math.min(5, edge.strength),
+        color: { color: '#aaa', highlight: '#666' },
+        title: `Shared: ${edge.strength} entities`,
+        smooth: { enabled: true, type: 'continuous', roundness: 0.3 } as any
+      }));
+
+      const graphData: GraphData = {
+        nodes: [...entityNodes, ...noteNodes] as any,
+        edges: edges
+      };
+
+      this.renderEntityNoteNetwork(graphContainer, graphData, data);
+
+    } catch (error) {
+      console.error("Failed to load entity-note graph:", error);
+      graphContainer.empty();
+      graphContainer.createEl("div", {
+        text: `Failed to load: ${error}`,
+        cls: "didymos-graph-error",
+      });
+    }
+  }
+
+  renderEntityNoteNetwork(container: HTMLElement, graphData: GraphData, rawData: EntityNoteGraphData) {
+    container.empty();
+
+    const networkContainer = container.createEl("div", {
+      cls: "didymos-network-container",
+    });
+    networkContainer.style.height = "100%";
+    networkContainer.style.width = "100%";
+
+    const options = {
+      nodes: {
+        shape: 'dot',
+        scaling: { min: 10, max: 35 },
+        font: { size: 11, face: 'Tahoma' }
+      },
+      edges: {
+        smooth: { enabled: true, type: 'continuous', roundness: 0.3 } as any
+      },
+      physics: {
+        enabled: true,
+        solver: 'forceAtlas2Based',
+        forceAtlas2Based: {
+          gravitationalConstant: -40,
+          centralGravity: 0.01,
+          springLength: 80,
+          springConstant: 0.1,
+          damping: 0.4
+        },
+        stabilization: { enabled: true, iterations: 200, updateInterval: 25 }
+      },
+      interaction: {
+        hover: true,
+        tooltipDelay: 100,
+        navigationButtons: true,
+        keyboard: true,
+        zoomView: true
+      },
+      groups: {
+        entity: { shape: 'dot' },
+        note: { shape: 'box', color: { background: '#f5f5f5', border: '#bdbdbd' } }
+      }
+    };
+
+    if (this.network) {
+      this.network.destroy();
+    }
+
+    this.network = new Network(
+      networkContainer,
+      { nodes: graphData.nodes, edges: graphData.edges },
+      options
+    );
+
+    // 노트 더블클릭 시 열기
+    this.network.on("doubleClick", async (params) => {
+      if (params.nodes.length > 0) {
+        const nodeId = params.nodes[0];
+        if (nodeId.startsWith("note_")) {
+          const noteId = nodeId.replace("note_", "");
+          await this.app.workspace.openLinkText(noteId, "", false);
+        }
+      }
+    });
   }
 }

@@ -228,8 +228,17 @@ export interface EntityClusterDetail {
   internal_edges: Array<{
     from: string;
     to: string;
+    type?: string;  // RELATES_TO, BROADER, NARROWER
     fact: string;
     weight: number;
+  }>;
+  related_notes?: Array<{
+    note_id: string;
+    title: string;
+    path: string;
+    entity_uuids: string[];
+    entity_names: string[];
+    entity_count: number;
   }>;
 }
 
@@ -743,17 +752,214 @@ export class DidymosAPI {
 
   /**
    * 특정 클러스터의 상세 정보 조회
+   * entity_uuids를 직접 전달하여 정확한 클러스터 상세 정보를 가져옴
    */
   async fetchEntityClusterDetail(
     vaultId: string,
-    clusterId: string
+    clusterName: string,
+    entityUuids: string[]
   ): Promise<{ status: string; cluster: EntityClusterDetail }> {
-    const url = new URL(this.baseUrl(`/graph/vault/entity-clusters/${encodeURIComponent(clusterId)}`));
+    const url = new URL(this.baseUrl("/graph/vault/entity-clusters/detail"));
     url.searchParams.set("vault_id", vaultId);
     url.searchParams.set("user_token", this.settings.userToken);
+
+    const response = await fetch(url.toString(), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        cluster_name: clusterName,
+        entity_uuids: entityUuids
+      })
+    });
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+
+  // ============================================
+  // Entity-Note Graph API (2nd Brain 노트 연결 시각화)
+  // ============================================
+
+  /**
+   * Entity-Note 연결 그래프
+   * Entity를 통해 Note 간 연결을 보여줌
+   */
+  async fetchEntityNoteGraph(
+    vaultId: string,
+    options?: {
+      folderPrefix?: string;
+      limit?: number;
+      minNoteConnections?: number;
+    }
+  ): Promise<EntityNoteGraphData> {
+    const url = new URL(this.baseUrl("/graph/vault/entity-note-graph"));
+    url.searchParams.set("vault_id", vaultId);
+    url.searchParams.set("user_token", this.settings.userToken);
+
+    if (options?.folderPrefix) {
+      url.searchParams.set("folder_prefix", options.folderPrefix);
+    }
+    if (options?.limit) {
+      url.searchParams.set("limit", String(options.limit));
+    }
+    if (options?.minNoteConnections) {
+      url.searchParams.set("min_note_connections", String(options.minNoteConnections));
+    }
 
     const response = await fetch(url.toString());
     if (!response.ok) throw new Error(`API error: ${response.status}`);
     return response.json();
   }
+
+  // ============================================
+  // Thinking Insights API (Palantir Foundry 스타일)
+  // ============================================
+
+  /**
+   * 사고 패턴 인사이트
+   * - 집중 영역, 브릿지 개념, 고립 영역, 탐구 제안
+   */
+  async fetchThinkingInsights(
+    vaultId: string,
+    options?: {
+      folderPrefix?: string;
+    }
+  ): Promise<ThinkingInsightsData> {
+    const url = new URL(this.baseUrl("/graph/vault/thinking-insights"));
+    url.searchParams.set("vault_id", vaultId);
+    url.searchParams.set("user_token", this.settings.userToken);
+
+    if (options?.folderPrefix) {
+      url.searchParams.set("folder_prefix", options.folderPrefix);
+    }
+
+    const response = await fetch(url.toString());
+    if (!response.ok) throw new Error(`API error: ${response.status}`);
+    return response.json();
+  }
+}
+
+// ============================================
+// Entity-Note Graph Types
+// ============================================
+
+export interface EntityNoteGraphEntity {
+  id: string;
+  name: string;
+  summary: string;
+  type: "Topic" | "Project" | "Person" | "Task";
+  color: string;
+  connected_notes: string[];
+  note_count: number;
+}
+
+export interface EntityNoteGraphNote {
+  id: string;
+  title: string;
+  path: string;
+}
+
+export interface NoteNoteEdge {
+  from: string;
+  to: string;
+  shared_entities: string[];
+  strength: number;
+}
+
+export interface EntityNoteGraphData {
+  status: string;
+  entity_count: number;
+  note_count: number;
+  edge_count: number;
+  entities: EntityNoteGraphEntity[];
+  notes: EntityNoteGraphNote[];
+  entity_note_edges: Array<{ entity_id: string; note_id: string }>;
+  note_note_edges: NoteNoteEdge[];
+}
+
+// ============================================
+// Thinking Insights Types (Palantir Foundry Style)
+// ============================================
+
+export interface FocusArea {
+  uuid: string;
+  name: string;
+  type: "Topic" | "Project" | "Person" | "Task";
+  strength: number;
+  notes: string[];
+}
+
+export interface BridgeConcept {
+  uuid: string;
+  name: string;
+  connected_count: number;
+  connects: string[];
+  importance: number;
+}
+
+export interface IsolatedArea {
+  uuid: string;
+  name: string;
+  note_count: number;
+  relation_count: number;
+  suggestion: string;
+}
+
+export interface ExplorationSuggestion {
+  area1: string;
+  area2: string;
+  potential: string;
+  reason: string;
+}
+
+// Time-based Trends Types
+export interface TopicTrend {
+  name: string;
+  uuid: string;
+  recent_count: number;
+  older_count: number;
+  total: number;
+}
+
+export interface TimeTrends {
+  recent_topics: TopicTrend[];
+  emerging_topics: TopicTrend[];
+  declining_topics: TopicTrend[];
+  stable_topics: TopicTrend[];
+  trend_period: string;
+}
+
+// Knowledge Health Score Types
+export interface HealthScore {
+  overall: number;
+  connection_density: number;
+  isolation_ratio: number;
+  completeness_score: number;
+  metrics: {
+    total_notes: number;
+    connected_notes: number;
+    avg_connections: number;
+    max_connections: number;
+  };
+  recommendations: string[];
+}
+
+export interface ThinkingInsightsData {
+  status: string;
+  summary: {
+    total_entities: number;
+    total_notes: number;
+    focus_count: number;
+    bridge_count: number;
+    isolated_count: number;
+    health_score?: number;
+  };
+  type_distribution: Record<string, { entity_count: number; note_count: number }>;
+  focus_areas: FocusArea[];
+  bridge_concepts: BridgeConcept[];
+  isolated_areas: IsolatedArea[];
+  exploration_suggestions: ExplorationSuggestion[];
+  time_trends?: TimeTrends;
+  health_score?: HealthScore;
 }
