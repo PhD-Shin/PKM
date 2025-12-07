@@ -1085,8 +1085,9 @@ PKM Types (choose ONE):
 Respond with ONLY the type name (e.g., "Concept" or "Topic"). No explanation."""
 
             try:
+                # NOTE: 무조건 gpt-5-mini 사용 (다른 모델로 변경 금지)
                 response = client_openai.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model="gpt-5-mini",
                     messages=[{"role": "user", "content": prompt}],
                     max_tokens=10,
                     temperature=0
