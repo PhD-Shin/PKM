@@ -1188,11 +1188,12 @@ async def get_entity_note_graph(
 
         UNION
 
-        // Episodic 기반 연결 (Episodic.name = Note.note_id)
+        // Episodic 기반 연결 (Episodic.name = 'note_' + Note.note_id)
         MATCH (ep:Episodic)-[:MENTIONS]->(e:Entity)
-        WHERE e.name IS NOT NULL AND ep.name IS NOT NULL
+        WHERE e.name IS NOT NULL AND ep.name IS NOT NULL AND ep.name STARTS WITH 'note_'
+        WITH e, ep, replace(ep.name, 'note_', '') as derived_note_id
         MATCH (n2:Note)
-        WHERE {folder_condition2} n2.note_id = ep.name
+        WHERE {folder_condition2} n2.note_id = derived_note_id
         WITH e, collect(DISTINCT n2.note_id) as episodic_notes
         WHERE size(episodic_notes) > 0
         RETURN e.uuid as uuid, e.name as name, e.summary as summary,
@@ -1747,4 +1748,64 @@ async def migrate_note_mentions(
 
     except Exception as e:
         logger.error(f"Migration error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vault/debug-graph-structure")
+async def debug_graph_structure(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    디버그용: 그래프 데이터 구조 확인
+    - Episodic 노드 샘플
+    - Entity 노드 샘플
+    - Note 노드 샘플
+    - MENTIONS 관계 확인
+    """
+    try:
+        # 1. Episodic 샘플
+        episodic_sample = client.query("""
+            MATCH (ep:Episodic)
+            RETURN ep.name as name, ep.uuid as uuid, labels(ep) as labels
+            LIMIT 5
+        """, {})
+
+        # 2. Episodic -> Entity MENTIONS 관계
+        ep_entity_mentions = client.query("""
+            MATCH (ep:Episodic)-[m:MENTIONS]->(e:Entity)
+            RETURN ep.name as ep_name, e.name as entity_name, e.uuid as entity_uuid
+            LIMIT 10
+        """, {})
+
+        # 3. Note -> Entity MENTIONS 관계
+        note_entity_mentions = client.query("""
+            MATCH (n:Note)-[m:MENTIONS]->(e:Entity)
+            RETURN n.note_id as note_id, e.name as entity_name, e.uuid as entity_uuid
+            LIMIT 10
+        """, {})
+
+        # 4. Note 샘플
+        note_sample = client.query("""
+            MATCH (n:Note)
+            RETURN n.note_id as note_id, n.title as title
+            LIMIT 5
+        """, {})
+
+        # 5. Entity 노드 수
+        entity_count = client.query("""
+            MATCH (e:Entity)
+            RETURN count(e) as count
+        """, {})
+
+        return {
+            "episodic_sample": episodic_sample or [],
+            "ep_entity_mentions": ep_entity_mentions or [],
+            "note_entity_mentions": note_entity_mentions or [],
+            "note_sample": note_sample or [],
+            "entity_count": entity_count[0]["count"] if entity_count else 0
+        }
+    except Exception as e:
+        logger.error(f"Debug error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

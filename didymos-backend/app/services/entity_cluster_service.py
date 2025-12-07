@@ -55,6 +55,10 @@ def get_entities_with_embeddings(
     """
     Entity 노드들 가져오기 (embedding 옵션)
 
+    두 가지 경로 지원:
+    1. Note -[:MENTIONS]-> Entity (직접 관계)
+    2. Episodic -[:MENTIONS]-> Entity (Graphiti 관계, Episodic.name = 'note_' + note_id)
+
     Args:
         client: Neo4j 클라이언트
         limit: 최대 엔티티 수
@@ -64,58 +68,80 @@ def get_entities_with_embeddings(
     Returns:
         [{uuid, name, summary, pkm_type, name_embedding, mention_count}, ...]
     """
-    if folder_prefix:
-        # 폴더 필터가 있으면 해당 폴더 노트가 MENTIONS하는 엔티티만 조회
-        # embedding 없어도 가져옴 (그래프 클러스터링 가능)
-        cypher = """
-        MATCH (n:Note)-[:MENTIONS]->(e:Entity)
-        WHERE n.note_id STARTS WITH $folder_prefix
-        WITH e, count(DISTINCT n) as mention_count
-        WHERE mention_count >= $min_connections
-        RETURN e.uuid as uuid,
-               e.name as name,
-               e.summary as summary,
-               e.pkm_type as pkm_type,
-               e.name_embedding as embedding,
-               mention_count
-        ORDER BY mention_count DESC
-        LIMIT $limit
-        """
-        results = client.query(cypher, {
-            "folder_prefix": folder_prefix,
-            "limit": limit,
-            "min_connections": min_connections
-        })
-    else:
-        # 폴더 필터 없으면 전체 엔티티 조회 (min_connections 필터 적용)
-        # embedding 없어도 가져옴 (그래프 클러스터링 가능)
-        cypher = """
-        MATCH (n:Note)-[:MENTIONS]->(e:Entity)
-        WITH e, count(DISTINCT n) as mention_count
-        WHERE mention_count >= $min_connections
-        RETURN e.uuid as uuid,
-               e.name as name,
-               e.summary as summary,
-               e.pkm_type as pkm_type,
-               e.name_embedding as embedding,
-               mention_count
-        ORDER BY mention_count DESC
-        LIMIT $limit
-        """
-        results = client.query(cypher, {
-            "limit": limit,
-            "min_connections": min_connections
-        })
+    folder_condition = "n.note_id STARTS WITH $folder_prefix AND" if folder_prefix else ""
+    folder_condition2 = "n2.note_id STARTS WITH $folder_prefix AND" if folder_prefix else ""
 
-    entities = []
+    # 두 경로를 UNION으로 합침
+    cypher = f"""
+    // 방법1: 직접 MENTIONS 관계 (Note -> Entity)
+    MATCH (n:Note)-[:MENTIONS]->(e:Entity)
+    WHERE {folder_condition} e.name IS NOT NULL
+    WITH e, collect(DISTINCT n.note_id) as note_ids
+    RETURN e.uuid as uuid,
+           e.name as name,
+           e.summary as summary,
+           e.pkm_type as pkm_type,
+           e.name_embedding as embedding,
+           note_ids
+
+    UNION
+
+    // 방법2: Episodic 통한 연결 (Graphiti)
+    MATCH (ep:Episodic)-[:MENTIONS]->(e:Entity)
+    WHERE e.name IS NOT NULL AND ep.name IS NOT NULL AND ep.name STARTS WITH 'note_'
+    WITH e, ep, replace(ep.name, 'note_', '') as derived_note_id
+    MATCH (n2:Note)
+    WHERE {folder_condition2} n2.note_id = derived_note_id
+    WITH e, collect(DISTINCT n2.note_id) as note_ids
+    WHERE size(note_ids) > 0
+    RETURN e.uuid as uuid,
+           e.name as name,
+           e.summary as summary,
+           e.pkm_type as pkm_type,
+           e.name_embedding as embedding,
+           note_ids
+    """
+
+    results = client.query(cypher, {
+        "folder_prefix": folder_prefix or "",
+        "limit": limit,
+        "min_connections": min_connections
+    })
+
+    # UNION 결과 병합 (같은 entity의 note_ids 합치기)
+    entity_map = {}
     for row in results or []:
+        uuid = row["uuid"]
+        if uuid not in entity_map:
+            entity_map[uuid] = {
+                "uuid": uuid,
+                "name": row["name"] or uuid,
+                "summary": row.get("summary", ""),
+                "pkm_type": row.get("pkm_type", "Topic"),
+                "embedding": row.get("embedding"),
+                "note_ids": set(row.get("note_ids", []) or [])
+            }
+        else:
+            entity_map[uuid]["note_ids"].update(row.get("note_ids", []) or [])
+
+    # min_connections 필터 및 정렬
+    filtered = [
+        {**data, "mention_count": len(data["note_ids"])}
+        for data in entity_map.values()
+        if len(data["note_ids"]) >= min_connections
+    ]
+    filtered.sort(key=lambda x: x["mention_count"], reverse=True)
+
+    # note_ids는 set이므로 list로 변환하지 않고 제거 (필요 없음)
+    entities = []
+    for item in filtered[:limit]:
         entities.append({
-            "uuid": row["uuid"],
-            "name": row["name"] or row["uuid"],
-            "summary": row.get("summary", ""),
-            "pkm_type": row.get("pkm_type", "Topic"),
-            "embedding": row.get("embedding"),
-            "mention_count": row.get("mention_count", 1)
+            "uuid": item["uuid"],
+            "name": item["name"],
+            "summary": item["summary"],
+            "pkm_type": item["pkm_type"],
+            "embedding": item["embedding"],
+            "mention_count": item["mention_count"]
         })
 
     return entities

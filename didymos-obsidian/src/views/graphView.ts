@@ -2790,6 +2790,11 @@ export class DidymosGraphView extends ItemView {
 
       const folderPrefix = this.selectedFolders.length > 0 ? this.selectedFolders[0] + "/" : undefined;
 
+      console.log("[2nd Brain] Fetching entity-note graph...");
+      console.log("[2nd Brain] API Endpoint:", this.settings.apiEndpoint);
+      console.log("[2nd Brain] Vault ID:", this.settings.vaultId);
+      console.log("[2nd Brain] Folder prefix:", folderPrefix);
+
       const data: EntityNoteGraphData = await this.api.fetchEntityNoteGraph(
         this.settings.vaultId,
         {
@@ -2798,6 +2803,9 @@ export class DidymosGraphView extends ItemView {
           minNoteConnections: 2
         }
       );
+
+      console.log("[2nd Brain] Response:", data);
+      console.log("[2nd Brain] Entity count:", data.entity_count);
 
       if (this.clusterStatusEl) {
         const folderInfo = folderPrefix ? ` • Folder: ${this.selectedFolders[0]}` : "";
