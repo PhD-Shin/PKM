@@ -1662,3 +1662,36 @@ async def get_thinking_insights(
     except Exception as e:
         logger.error(f"Thinking insights error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/vault/migrate-note-mentions")
+async def migrate_note_mentions(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    batch_size: int = Query(100, description="Batch size", ge=10, le=500),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    Graphiti Episodic-Entity MENTIONS 관계를 Note-Entity MENTIONS로 마이그레이션
+
+    Graphiti는 Episodic → Entity MENTIONS 관계를 사용하지만,
+    2nd Brain 시각화를 위해서는 Note → Entity MENTIONS 관계가 필요합니다.
+
+    이 엔드포인트는 기존 Episodic-Entity 관계를 Note-Entity 관계로 변환합니다.
+    """
+    try:
+        from app.services.hybrid_graphiti_service import migrate_episodic_to_note_mentions
+
+        result = migrate_episodic_to_note_mentions(
+            vault_id=vault_id,
+            batch_size=batch_size
+        )
+
+        return {
+            "status": "success",
+            "migration_result": result
+        }
+
+    except Exception as e:
+        logger.error(f"Migration error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

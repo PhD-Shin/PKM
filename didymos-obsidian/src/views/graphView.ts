@@ -379,7 +379,7 @@ export class DidymosGraphView extends ItemView {
     }
   }
 
-  async syncAllNotes(button: HTMLElement) {
+  async syncAllNotes(button: HTMLElement, forceFullSync: boolean = false) {
     // 이미 syncing 중이면 무시
     if (this.isSyncing) {
       return;
@@ -396,8 +396,8 @@ export class DidymosGraphView extends ItemView {
       // Vault의 모든 .md 파일 가져오기
       const allMarkdownFiles = this.app.vault.getMarkdownFiles();
 
-      // 증분 동기화: 마지막 sync 이후 수정된 파일만 필터링
-      const lastSyncTime = this.settings.lastBulkSyncTime || 0;
+      // 증분 동기화: 마지막 sync 이후 수정된 파일만 필터링 (forceFullSync이면 전체 동기화)
+      const lastSyncTime = forceFullSync ? 0 : (this.settings.lastBulkSyncTime || 0);
       const markdownFiles = allMarkdownFiles.filter(file => file.stat.mtime > lastSyncTime);
 
       const totalFiles = markdownFiles.length;
@@ -542,13 +542,13 @@ export class DidymosGraphView extends ItemView {
       this.settings.lastBulkSyncTime = 0;
       await (this.plugin as any).saveSettings();
 
-      // Step 2: 전체 재동기화
+      // Step 2: 전체 재동기화 (forceFullSync = true)
       button.textContent = "🔄 2/2 Syncing all notes...";
 
       // Sync All 버튼 찾기
       const syncBtn = this.containerEl.querySelector(".didymos-sync-btn:not(.didymos-reset-btn)") as HTMLElement;
       if (syncBtn) {
-        await this.syncAllNotes(syncBtn);
+        await this.syncAllNotes(syncBtn, true);  // forceFullSync = true
       }
 
       button.textContent = "✅ Reset & Resync complete";

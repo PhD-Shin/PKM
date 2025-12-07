@@ -41,7 +41,9 @@
       "Bash(timeout 15 railway logs:*)",
       "Bash(timeout 20 railway logs:*)",
       "Bash(gtimeout 15 railway logs:*)",
-      "Bash(gtimeout 20 railway logs:*)"
+      "Bash(gtimeout 20 railway logs:*)",
+      "Bash(gtimeout 10 railway logs:*)",
+      "Bash(timeout 10 railway logs:*)"
     ],
     "deny": [],
     "ask": []

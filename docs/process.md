@@ -379,6 +379,52 @@ Obsidian Vault/
 | **20** | Multi-Vault 지원 | 여러 Vault 간 지식 연결 |
 | **21** | Collaborative KG | 팀 지식 그래프 공유 |
 | **22** | AI Agent 통합 | 자율 리서치 에이전트 |
+| **23** | 폴더 기반 증분 Sync | 변경된 노트만 재처리, 폴더별 sync 관리 |
+
+---
+
+## 🔄 Sync 전략
+
+### 현재 방식: Reset & Resync (전체)
+
+개발 단계에서 사용하는 단순한 동기화 방식입니다.
+
+```
+동작 흐름:
+1. "Reset & Resync" 버튼 클릭
+2. vault의 모든 엔티티 삭제
+3. 전체 노트에서 엔티티 재추출 (Sync All)
+
+현재 Settings:
+settings.lastBulkSyncTime: number  // 전체 vault 기준
+```
+
+### 향후 개선: 폴더 기반 증분 Sync (Phase 23)
+
+> 🔸 베타 이후 구현 예정
+
+**개선 방향**:
+1. 폴더별 Sync - 특정 폴더만 reset/resync
+2. 증분 Sync - 변경된 노트만 재처리 (`mtime > folderSyncTime`)
+
+```typescript
+// 향후 Settings 구조
+folderSyncTimes: {
+  "1_프로젝트/": 1733567890123,
+  "2_영역/": 1733567890456,
+  // ...
+}
+```
+
+**향후 UI**:
+- 폴더 선택 드롭다운
+- 폴더별 Sync/Reset 버튼
+- 폴더별 마지막 sync 시간 표시
+
+**구현 시 고려사항**:
+- 폴더 간 엔티티 참조 관계 (cross-folder references)
+- 폴더 삭제/이름 변경 시 sync 정보 마이그레이션
+- 폴더 깊이 설정 옵션
 
 ---
 
