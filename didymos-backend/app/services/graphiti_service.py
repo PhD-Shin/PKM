@@ -17,6 +17,8 @@ import logging
 
 from graphiti_core import Graphiti
 from graphiti_core.nodes import EpisodeType
+from graphiti_core.llm_client import OpenAIClient
+from graphiti_core.llm_client.config import LLMConfig
 
 from app.config import settings
 
@@ -54,12 +56,21 @@ class GraphitiService:
         try:
             logger.info("Initializing Graphiti client...")
 
+            # LLM 설정: gpt-5-mini 사용 (비용 효율적)
+            llm_config = LLMConfig(
+                api_key=settings.openai_api_key,
+                model="gpt-5-mini",  # 메인 모델
+                small_model="gpt-5-mini",  # 간단한 작업용
+            )
+            llm_client = OpenAIClient(config=llm_config)
+
             # Graphiti 클라이언트 생성
             # NOTE: Graphiti는 내부적으로 Neo4j Bolt 드라이버 사용
             self._graphiti = Graphiti(
                 uri=settings.neo4j_uri,
                 user=settings.neo4j_username,
                 password=settings.neo4j_password,
+                llm_client=llm_client,
             )
 
             # 인덱스 및 제약조건 생성

@@ -9,6 +9,15 @@ Flow:
 2. RELATES_TO 관계로 그래프 커뮤니티 탐지 (Louvain)
 3. name_embedding 코사인 유사도로 시멘틱 클러스터링
 4. 두 결과를 조합하여 최종 클러스터 결정
+
+PKM Semantic Edge Types (PKM Type 조합 기반):
+- Goal → Project: ACHIEVED_BY (목표 달성 프로젝트)
+- Project → Task: REQUIRES (프로젝트 필수 태스크)
+- Concept → Project/Task: USED_BY (개념 활용)
+- Question → Insight: ANSWERED_BY (질문-답변)
+- Insight → Resource: DERIVED_FROM (인사이트 출처)
+- Topic → Topic: RELATED_TO (연관 주제)
+- Resource → *: INFORMS (참고 자료)
 """
 
 import logging
@@ -19,6 +28,203 @@ from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================================
+# PKM Semantic Edge Type Inference
+# PKM Type 조합 기반으로 의미있는 관계 유형 추론
+# ============================================================
+
+# PKM Type 조합 → Semantic Edge Type 매핑
+# (from_type, to_type) → (edge_type, edge_label_ko, description)
+PKM_EDGE_TYPE_MATRIX = {
+    # Goal 관계
+    ("Goal", "Project"): ("ACHIEVED_BY", "달성 수단", "이 목표는 이 프로젝트로 달성"),
+    ("Goal", "Task"): ("REQUIRES", "필요 태스크", "목표 달성에 필요한 작업"),
+    ("Goal", "Goal"): ("CONTRIBUTES_TO", "기여", "하위 목표가 상위 목표에 기여"),
+    ("Goal", "Topic"): ("FOCUSES_ON", "집중 영역", "목표가 집중하는 주제"),
+    ("Goal", "Concept"): ("APPLIES", "적용 개념", "목표에 적용되는 개념"),
+
+    # Project 관계
+    ("Project", "Task"): ("REQUIRES", "필요 작업", "프로젝트 완료에 필요한 태스크"),
+    ("Project", "Goal"): ("CONTRIBUTES_TO", "목표 기여", "프로젝트가 기여하는 목표"),
+    ("Project", "Project"): ("DEPENDS_ON", "의존", "프로젝트 간 의존성"),
+    ("Project", "Topic"): ("INVOLVES", "관련 주제", "프로젝트 관련 주제"),
+    ("Project", "Concept"): ("USES", "사용 개념", "프로젝트에서 사용하는 개념"),
+    ("Project", "Resource"): ("REFERENCES", "참고 자료", "프로젝트 참고 자료"),
+    ("Project", "Question"): ("EXPLORES", "탐구 질문", "프로젝트에서 탐구하는 질문"),
+    ("Project", "Insight"): ("PRODUCES", "도출 인사이트", "프로젝트에서 도출된 통찰"),
+
+    # Task 관계
+    ("Task", "Task"): ("BLOCKS", "선행 작업", "이 태스크가 선행되어야 함"),
+    ("Task", "Project"): ("PART_OF", "소속 프로젝트", "태스크가 속한 프로젝트"),
+    ("Task", "Topic"): ("INVOLVES", "관련 주제", "태스크 관련 주제"),
+    ("Task", "Concept"): ("USES", "사용 개념", "태스크에서 사용하는 개념"),
+    ("Task", "Resource"): ("REFERENCES", "참고 자료", "태스크 참고 자료"),
+    ("Task", "Insight"): ("PRODUCES", "도출 인사이트", "태스크에서 얻은 통찰"),
+
+    # Topic 관계
+    ("Topic", "Topic"): ("RELATED_TO", "연관 주제", "연관된 주제 영역"),
+    ("Topic", "Concept"): ("CONTAINS", "포함 개념", "주제에 포함된 개념"),
+    ("Topic", "Project"): ("APPLIED_IN", "적용 프로젝트", "주제가 적용된 프로젝트"),
+    ("Topic", "Resource"): ("DOCUMENTED_IN", "문서화", "주제가 문서화된 자료"),
+    ("Topic", "Question"): ("RAISES", "제기 질문", "주제에서 제기되는 질문"),
+    ("Topic", "Insight"): ("REVEALS", "드러난 통찰", "주제에서 드러난 인사이트"),
+
+    # Concept 관계
+    ("Concept", "Concept"): ("RELATES_TO", "관련 개념", "연관된 개념"),
+    ("Concept", "Topic"): ("BELONGS_TO", "소속 주제", "개념이 속한 주제"),
+    ("Concept", "Project"): ("APPLIED_IN", "적용처", "개념이 적용된 프로젝트"),
+    ("Concept", "Task"): ("USED_IN", "사용처", "개념이 사용된 태스크"),
+    ("Concept", "Resource"): ("DEFINED_IN", "정의 출처", "개념이 정의된 자료"),
+
+    # Question 관계
+    ("Question", "Insight"): ("ANSWERED_BY", "답변", "질문에 대한 답변 인사이트"),
+    ("Question", "Topic"): ("ABOUT", "관련 주제", "질문의 주제"),
+    ("Question", "Question"): ("LEADS_TO", "연결 질문", "이 질문이 이끄는 후속 질문"),
+    ("Question", "Project"): ("EXPLORED_IN", "탐구처", "질문이 탐구되는 프로젝트"),
+    ("Question", "Resource"): ("ADDRESSED_IN", "다룬 자료", "질문을 다루는 자료"),
+
+    # Insight 관계
+    ("Insight", "Resource"): ("DERIVED_FROM", "출처", "인사이트의 출처 자료"),
+    ("Insight", "Insight"): ("SUPPORTS", "뒷받침", "인사이트 간 뒷받침 관계"),
+    ("Insight", "Question"): ("ANSWERS", "답변 대상", "인사이트가 답변하는 질문"),
+    ("Insight", "Project"): ("INFORMS", "적용처", "인사이트가 적용되는 프로젝트"),
+    ("Insight", "Topic"): ("ABOUT", "관련 주제", "인사이트의 주제"),
+    ("Insight", "Concept"): ("CLARIFIES", "명확화", "인사이트가 명확히 하는 개념"),
+
+    # Resource 관계
+    ("Resource", "Topic"): ("COVERS", "다루는 주제", "자료가 다루는 주제"),
+    ("Resource", "Concept"): ("DEFINES", "정의 개념", "자료가 정의하는 개념"),
+    ("Resource", "Resource"): ("CITES", "인용", "자료 간 인용 관계"),
+    ("Resource", "Question"): ("ADDRESSES", "다루는 질문", "자료가 다루는 질문"),
+    ("Resource", "Insight"): ("PROVIDES", "제공 인사이트", "자료에서 제공하는 통찰"),
+    ("Resource", "Project"): ("INFORMS", "정보 제공", "프로젝트에 정보 제공"),
+
+    # Person 관계 (하위 호환성)
+    ("Person", "Project"): ("WORKS_ON", "작업 중", "사람이 작업 중인 프로젝트"),
+    ("Person", "Task"): ("ASSIGNED_TO", "담당", "사람에게 할당된 태스크"),
+    ("Person", "Topic"): ("INTERESTED_IN", "관심 분야", "사람의 관심 주제"),
+    ("Person", "Person"): ("COLLABORATES_WITH", "협력", "협력 관계"),
+}
+
+
+def infer_semantic_edge_type(
+    from_type: str,
+    to_type: str,
+    fact: str = None
+) -> Dict[str, str]:
+    """
+    PKM Type 조합을 기반으로 semantic edge type 추론
+
+    Args:
+        from_type: source entity의 PKM Type
+        to_type: target entity의 PKM Type
+        fact: Graphiti가 추출한 fact (있으면 활용)
+
+    Returns:
+        {
+            "edge_type": "ACHIEVED_BY",
+            "edge_label": "달성 수단",
+            "description": "이 목표는 이 프로젝트로 달성",
+            "fact": "..." (있으면)
+        }
+    """
+    # 정규화
+    from_type = from_type or "Topic"
+    to_type = to_type or "Topic"
+
+    # Person → Topic 매핑 (하위 호환성)
+    if from_type not in PKM_EDGE_TYPE_MATRIX.get((from_type, to_type), ("", "", ""))[0]:
+        pass  # 그대로 사용
+
+    # 매핑 조회
+    edge_info = PKM_EDGE_TYPE_MATRIX.get((from_type, to_type))
+
+    if edge_info:
+        edge_type, edge_label, description = edge_info
+    else:
+        # 기본값: 범용 관계
+        edge_type = "RELATES_TO"
+        edge_label = "관련"
+        description = f"{from_type}와 {to_type} 간의 관계"
+
+    result = {
+        "edge_type": edge_type,
+        "edge_label": edge_label,
+        "description": description
+    }
+
+    # fact가 있으면 추가 (Graphiti 추출 결과)
+    if fact and fact.strip():
+        result["fact"] = fact.strip()
+
+    return result
+
+
+def get_relates_to_edges_with_semantic_types(
+    client,
+    entity_uuids: List[str]
+) -> List[Dict[str, Any]]:
+    """
+    Entity 간 RELATES_TO 관계 + PKM Type 기반 Semantic Edge Type 가져오기
+
+    Returns:
+        [{
+            "from_uuid": str,
+            "to_uuid": str,
+            "from_name": str,
+            "to_name": str,
+            "from_type": str,
+            "to_type": str,
+            "weight": float,
+            "fact": str (if exists),
+            "semantic_type": {
+                "edge_type": str,
+                "edge_label": str,
+                "description": str
+            }
+        }, ...]
+    """
+    cypher = """
+    MATCH (e1:Entity)-[r:RELATES_TO]->(e2:Entity)
+    WHERE e1.uuid IN $uuids AND e2.uuid IN $uuids
+    RETURN e1.uuid as from_uuid,
+           e1.name as from_name,
+           e1.pkm_type as from_type,
+           e2.uuid as to_uuid,
+           e2.name as to_name,
+           e2.pkm_type as to_type,
+           COALESCE(r.weight, 1.0) as weight,
+           r.fact as fact
+    """
+
+    results = client.query(cypher, {"uuids": entity_uuids})
+
+    edges = []
+    for row in results or []:
+        from_type = row.get("from_type") or "Topic"
+        to_type = row.get("to_type") or "Topic"
+        fact = row.get("fact", "")
+
+        # Semantic type 추론
+        semantic_info = infer_semantic_edge_type(from_type, to_type, fact)
+
+        edges.append({
+            "from_uuid": row["from_uuid"],
+            "to_uuid": row["to_uuid"],
+            "from_name": row.get("from_name", row["from_uuid"]),
+            "to_name": row.get("to_name", row["to_uuid"]),
+            "from_type": from_type,
+            "to_type": to_type,
+            "weight": row.get("weight", 1.0),
+            "fact": fact,
+            "semantic_type": semantic_info
+        })
+
+    return edges
+
+
+# ============================================================
 # UMAP + HDBSCAN imports (lazy)
 try:
     import hdbscan
@@ -670,27 +876,49 @@ def get_cluster_detail(
             "connections": row.get("internal_connections", 0)
         })
 
-    # 내부 RELATES_TO 관계들
+    # 내부 RELATES_TO 관계들 (PKM Type 포함 - Semantic Edge 추론용)
     cypher_edges = """
     MATCH (e1:Entity)-[r:RELATES_TO]->(e2:Entity)
     WHERE e1.uuid IN $uuids AND e2.uuid IN $uuids
-    RETURN e1.uuid as from_uuid, e2.uuid as to_uuid,
-           r.fact as fact, r.weight as weight
+    RETURN e1.uuid as from_uuid,
+           e1.name as from_name,
+           e1.pkm_type as from_type,
+           e2.uuid as to_uuid,
+           e2.name as to_name,
+           e2.pkm_type as to_type,
+           r.fact as fact,
+           r.weight as weight
     """
 
     edge_results = client.query(cypher_edges, {"uuids": uuids})
 
     edges = []
     for row in edge_results or []:
+        from_type = row.get("from_type") or "Topic"
+        to_type = row.get("to_type") or "Topic"
+        fact = row.get("fact", "")
+
+        # Semantic Edge Type 추론
+        semantic_info = infer_semantic_edge_type(from_type, to_type, fact)
+
         edges.append({
             "from": row["from_uuid"],
+            "from_name": row.get("from_name", row["from_uuid"]),
+            "from_type": from_type,
             "to": row["to_uuid"],
-            "fact": row.get("fact", ""),
-            "weight": row.get("weight", 1.0)
+            "to_name": row.get("to_name", row["to_uuid"]),
+            "to_type": to_type,
+            "fact": fact,
+            "weight": row.get("weight", 1.0),
+            "semantic_type": semantic_info["edge_type"],
+            "semantic_label": semantic_info["edge_label"],
+            "semantic_description": semantic_info["description"]
         })
 
     return {
         **target,
         "entities": entities,
-        "internal_edges": edges
+        "internal_edges": edges,
+        "has_semantic_edges": True,
+        "semantic_edge_count": len(edges)
     }

@@ -21,7 +21,10 @@ from app.services.cluster_service import (
 )
 from app.services.entity_cluster_service import (
     compute_entity_clusters_hybrid,
-    get_cluster_detail
+    get_cluster_detail,
+    get_relates_to_edges_with_semantic_types,
+    infer_semantic_edge_type,
+    PKM_EDGE_TYPE_MATRIX
 )
 from app.schemas.cluster import (
     ClusteredGraphResponse,
@@ -1051,12 +1054,17 @@ async def get_entity_cluster_detail_by_uuids(
             })
             type_distribution[pkm_type] = type_distribution.get(pkm_type, 0) + 1
 
-        # 내부 관계들 (모든 Entity 간 관계)
-        # Graphiti는 다양한 관계 타입을 생성할 수 있음 (RELATES_TO, BROADER, NARROWER 등)
+        # 내부 관계들 + PKM Semantic Edge Type 추론
+        # PKM Type 조합으로 의미있는 관계 유형 자동 분류
         cypher_edges = """
         MATCH (e1:Entity)-[r]->(e2:Entity)
         WHERE e1.uuid IN $uuids AND e2.uuid IN $uuids
-        RETURN e1.uuid as from_uuid, e2.uuid as to_uuid,
+        RETURN e1.uuid as from_uuid,
+               e1.name as from_name,
+               e1.pkm_type as from_type,
+               e2.uuid as to_uuid,
+               e2.name as to_name,
+               e2.pkm_type as to_type,
                type(r) as rel_type,
                r.fact as fact,
                COALESCE(r.weight, 1.0) as weight
@@ -1066,12 +1074,27 @@ async def get_entity_cluster_detail_by_uuids(
 
         edges = []
         for row in edge_results or []:
+            from_type = row.get("from_type") or "Topic"
+            to_type = row.get("to_type") or "Topic"
+            fact = row.get("fact", "")
+
+            # PKM Type 기반 Semantic Edge Type 추론
+            semantic_info = infer_semantic_edge_type(from_type, to_type, fact)
+
             edges.append({
                 "from": row["from_uuid"],
+                "from_name": row.get("from_name", ""),
+                "from_type": from_type,
                 "to": row["to_uuid"],
+                "to_name": row.get("to_name", ""),
+                "to_type": to_type,
                 "type": row.get("rel_type", "RELATES_TO"),
-                "fact": row.get("fact", ""),
-                "weight": row.get("weight", 1.0)
+                "fact": fact,
+                "weight": row.get("weight", 1.0),
+                # Semantic Edge 정보 (PKM Type 기반 추론)
+                "semantic_type": semantic_info["edge_type"],
+                "semantic_label": semantic_info["edge_label"],
+                "semantic_description": semantic_info["description"]
             })
 
         # 관련 노트 조회 (엔티티들이 MENTIONS된 노트들)
@@ -1100,6 +1123,12 @@ async def get_entity_cluster_detail_by_uuids(
                 "entity_count": len(row.get("entity_uuids", []))
             })
 
+        # Semantic edge 통계
+        semantic_edge_types = {}
+        for edge in edges:
+            stype = edge.get("semantic_type", "RELATES_TO")
+            semantic_edge_types[stype] = semantic_edge_types.get(stype, 0) + 1
+
         return {
             "status": "success",
             "cluster": {
@@ -1109,7 +1138,11 @@ async def get_entity_cluster_detail_by_uuids(
                 "type_distribution": type_distribution,
                 "entities": entities,
                 "internal_edges": edges,
-                "related_notes": related_notes
+                "related_notes": related_notes,
+                # Semantic Edge 메타데이터
+                "has_semantic_edges": True,
+                "semantic_edge_count": len(edges),
+                "semantic_edge_types": semantic_edge_types
             }
         }
 
@@ -1857,6 +1890,319 @@ async def migrate_note_mentions(
 
     except Exception as e:
         logger.error(f"Migration error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Palantir-Style Bidirectional Feedback APIs
+# Kinetic Layer (UI) ↔ Semantic Layer (Neo4j) 양방향 동기화
+# =============================================================================
+
+class EntityPkmTypeUpdateRequest(BaseModel):
+    """Entity PKM Type 변경 요청"""
+    entity_uuid: str
+    new_pkm_type: str  # Goal, Project, Task, Topic, Concept, Question, Insight, Resource, Person
+
+
+class EntitySummaryUpdateRequest(BaseModel):
+    """Entity Summary 변경 요청"""
+    entity_uuid: str
+    new_summary: str
+
+
+class BulkEntityUpdateRequest(BaseModel):
+    """여러 Entity 일괄 업데이트 요청"""
+    updates: List[Dict[str, str]]  # [{entity_uuid, new_pkm_type}, ...]
+
+
+@router.post("/entity/update-pkm-type")
+async def update_entity_pkm_type(
+    request: EntityPkmTypeUpdateRequest,
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    🔄 Palantir-Style Bidirectional Feedback: Entity PKM Type 업데이트
+
+    사용자가 UI에서 Entity의 PKM Type을 변경하면:
+    1. Neo4j의 Entity 노드 레이블 업데이트
+    2. pkm_type 속성 업데이트
+    3. user_modified_at 타임스탬프 기록 (사용자 수정 추적)
+
+    **Palantir Foundry 철학:**
+    - Kinetic Layer (UI 조작) → Semantic Layer (지식 그래프) 반영
+    - 사용자의 도메인 지식이 시스템을 개선
+    - 학습 피드백 루프 형성
+
+    **유효한 PKM Type:**
+    - Goal: 장기 목표, 비전
+    - Project: 프로젝트, 결과물
+    - Task: 할 일, 액션 아이템
+    - Topic: 주제, 분야
+    - Concept: 개념, 방법론
+    - Question: 질문, 연구 문제
+    - Insight: 인사이트, 발견
+    - Resource: 자료, 참고문헌
+    - Person: 인물 (하위호환)
+    """
+    valid_types = ["Goal", "Project", "Task", "Topic", "Concept", "Question", "Insight", "Resource", "Person"]
+
+    if request.new_pkm_type not in valid_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid PKM type. Valid types: {valid_types}"
+        )
+
+    try:
+        entity_uuid = request.entity_uuid
+        new_type = request.new_pkm_type
+
+        # 기존 엔티티 확인
+        check_result = client.query(
+            "MATCH (e:Entity {uuid: $uuid}) RETURN e.name as name, e.pkm_type as current_type",
+            {"uuid": entity_uuid}
+        )
+
+        if not check_result:
+            raise HTTPException(status_code=404, detail=f"Entity not found: {entity_uuid}")
+
+        old_type = check_result[0].get("current_type", "Unknown")
+        entity_name = check_result[0].get("name", "Unknown")
+
+        # 레이블 및 속성 업데이트
+        cypher_update = f"""
+        MATCH (e:Entity {{uuid: $uuid}})
+        REMOVE e:Goal, e:Project, e:Task, e:Topic, e:Concept, e:Question, e:Insight, e:Resource, e:Person
+        SET e:{new_type}
+        SET e.pkm_type = $pkm_type
+        SET e.user_modified_at = datetime()
+        SET e.user_modified_type = $pkm_type
+        RETURN e.name as name, e.pkm_type as new_type
+        """
+
+        update_result = client.query(cypher_update, {"uuid": entity_uuid, "pkm_type": new_type})
+
+        logger.info(f"🔄 Bidirectional update: Entity '{entity_name}' type changed {old_type} → {new_type}")
+
+        return {
+            "status": "success",
+            "message": f"Entity type updated: {old_type} → {new_type}",
+            "entity": {
+                "uuid": entity_uuid,
+                "name": entity_name,
+                "old_type": old_type,
+                "new_type": new_type
+            },
+            "feedback_type": "palantir_bidirectional"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Entity update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/entity/update-summary")
+async def update_entity_summary(
+    request: EntitySummaryUpdateRequest,
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    🔄 Entity Summary 업데이트 (사용자 피드백)
+
+    Graphiti가 생성한 Entity Summary를 사용자가 수정할 수 있습니다.
+    더 정확한 설명으로 지식 그래프 품질을 개선합니다.
+    """
+    try:
+        entity_uuid = request.entity_uuid
+        new_summary = request.new_summary
+
+        # 기존 엔티티 확인
+        check_result = client.query(
+            "MATCH (e:Entity {uuid: $uuid}) RETURN e.name as name, e.summary as old_summary",
+            {"uuid": entity_uuid}
+        )
+
+        if not check_result:
+            raise HTTPException(status_code=404, detail=f"Entity not found: {entity_uuid}")
+
+        old_summary = check_result[0].get("old_summary", "")
+        entity_name = check_result[0].get("name", "Unknown")
+
+        # Summary 업데이트
+        cypher_update = """
+        MATCH (e:Entity {uuid: $uuid})
+        SET e.summary = $new_summary
+        SET e.user_modified_at = datetime()
+        SET e.user_modified_summary = true
+        RETURN e.name as name, e.summary as summary
+        """
+
+        client.query(cypher_update, {"uuid": entity_uuid, "new_summary": new_summary})
+
+        logger.info(f"🔄 Bidirectional update: Entity '{entity_name}' summary updated")
+
+        return {
+            "status": "success",
+            "message": "Entity summary updated",
+            "entity": {
+                "uuid": entity_uuid,
+                "name": entity_name,
+                "old_summary": old_summary[:100] + "..." if len(old_summary) > 100 else old_summary,
+                "new_summary": new_summary[:100] + "..." if len(new_summary) > 100 else new_summary
+            },
+            "feedback_type": "palantir_bidirectional"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Entity summary update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/entity/bulk-update-types")
+async def bulk_update_entity_types(
+    request: BulkEntityUpdateRequest,
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    🔄 여러 Entity PKM Type 일괄 업데이트
+
+    클러스터 뷰에서 여러 엔티티를 한 번에 재분류할 때 사용합니다.
+    """
+    valid_types = ["Goal", "Project", "Task", "Topic", "Concept", "Question", "Insight", "Resource", "Person"]
+
+    try:
+        updates = request.updates
+        if not updates:
+            raise HTTPException(status_code=400, detail="No updates provided")
+
+        success_count = 0
+        error_count = 0
+        results = []
+
+        for update in updates:
+            entity_uuid = update.get("entity_uuid")
+            new_type = update.get("new_pkm_type")
+
+            if not entity_uuid or not new_type:
+                error_count += 1
+                continue
+
+            if new_type not in valid_types:
+                error_count += 1
+                results.append({"uuid": entity_uuid, "status": "error", "reason": "invalid_type"})
+                continue
+
+            try:
+                cypher_update = f"""
+                MATCH (e:Entity {{uuid: $uuid}})
+                REMOVE e:Goal, e:Project, e:Task, e:Topic, e:Concept, e:Question, e:Insight, e:Resource, e:Person
+                SET e:{new_type}
+                SET e.pkm_type = $pkm_type
+                SET e.user_modified_at = datetime()
+                RETURN e.name as name
+                """
+
+                result = client.query(cypher_update, {"uuid": entity_uuid, "pkm_type": new_type})
+
+                if result:
+                    success_count += 1
+                    results.append({"uuid": entity_uuid, "status": "success", "new_type": new_type})
+                else:
+                    error_count += 1
+                    results.append({"uuid": entity_uuid, "status": "error", "reason": "not_found"})
+
+            except Exception as e:
+                error_count += 1
+                results.append({"uuid": entity_uuid, "status": "error", "reason": str(e)})
+
+        logger.info(f"🔄 Bulk update: {success_count} success, {error_count} errors")
+
+        return {
+            "status": "success" if error_count == 0 else "partial",
+            "total": len(updates),
+            "success_count": success_count,
+            "error_count": error_count,
+            "results": results[:50],  # 상위 50개만 반환
+            "feedback_type": "palantir_bidirectional_bulk"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Bulk update error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/entity/user-modifications")
+async def get_user_modifications(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    limit: int = Query(50, description="Maximum results", ge=10, le=200),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    📊 사용자 수정 이력 조회
+
+    Palantir-style 피드백으로 사용자가 수정한 Entity 목록을 반환합니다.
+    어떤 Entity가 자동 분류와 다르게 수정되었는지 파악할 수 있습니다.
+
+    **활용:**
+    - 자동 분류 알고리즘 개선을 위한 학습 데이터
+    - 사용자 도메인 지식 패턴 분석
+    - 시스템 정확도 측정
+    """
+    try:
+        cypher = """
+        MATCH (e:Entity)
+        WHERE e.user_modified_at IS NOT NULL
+        RETURN e.uuid as uuid,
+               e.name as name,
+               e.pkm_type as current_type,
+               e.user_modified_type as modified_to,
+               e.user_modified_summary as summary_modified,
+               e.user_modified_at as modified_at
+        ORDER BY e.user_modified_at DESC
+        LIMIT $limit
+        """
+
+        results = client.query(cypher, {"limit": limit})
+
+        modifications = []
+        for row in results or []:
+            modifications.append({
+                "uuid": row["uuid"],
+                "name": row["name"],
+                "current_type": row.get("current_type"),
+                "modified_to": row.get("modified_to"),
+                "summary_modified": row.get("summary_modified", False),
+                "modified_at": row.get("modified_at")
+            })
+
+        # 수정 통계
+        type_changes = {}
+        for mod in modifications:
+            if mod.get("modified_to"):
+                type_changes[mod["modified_to"]] = type_changes.get(mod["modified_to"], 0) + 1
+
+        return {
+            "status": "success",
+            "total_modifications": len(modifications),
+            "modifications": modifications,
+            "type_change_distribution": type_changes,
+            "feedback_type": "palantir_user_feedback_history"
+        }
+
+    except Exception as e:
+        logger.error(f"User modifications query error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
