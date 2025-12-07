@@ -996,6 +996,127 @@ async def debug_entity_relations(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/admin/reclassify-entities")
+async def reclassify_entities_to_core8(
+    batch_size: int = Query(100, description="한 번에 처리할 엔티티 수", ge=10, le=1000),
+    force_all: bool = Query(False, description="이미 분류된 엔티티도 재분류할지 여부"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    기존 엔티티들을 PKM Core Ontology v2 (8개 타입)으로 재분류
+
+    - Goal, Project, Task, Topic, Concept, Question, Insight, Resource + Person
+    - force_all=False: 기존 4개 타입(Topic, Project, Task, Person)만 있는 엔티티만 재분류
+    - force_all=True: 모든 엔티티 재분류
+    """
+    from app.services.hybrid_graphiti_service import classify_entity_to_pkm_type
+
+    try:
+        # Step 1: 재분류 대상 엔티티 조회
+        if force_all:
+            # 모든 엔티티
+            cypher_find = """
+            MATCH (e:Entity)
+            WHERE e.name IS NOT NULL
+            RETURN e.uuid as uuid, e.name as name, e.summary as summary,
+                   labels(e) as current_labels
+            LIMIT $batch_size
+            """
+        else:
+            # 새 5개 타입(Goal, Concept, Question, Insight, Resource)이 없는 엔티티만
+            cypher_find = """
+            MATCH (e:Entity)
+            WHERE e.name IS NOT NULL
+              AND NOT e:Goal AND NOT e:Concept AND NOT e:Question
+              AND NOT e:Insight AND NOT e:Resource
+            RETURN e.uuid as uuid, e.name as name, e.summary as summary,
+                   labels(e) as current_labels
+            LIMIT $batch_size
+            """
+
+        entities = client.query(cypher_find, {"batch_size": batch_size})
+
+        if not entities:
+            return {
+                "status": "completed",
+                "message": "No entities need reclassification",
+                "processed": 0
+            }
+
+        logger.info(f"Found {len(entities)} entities to reclassify")
+
+        # Step 2: 각 엔티티 재분류
+        stats = {
+            "Goal": 0, "Project": 0, "Task": 0, "Topic": 0,
+            "Concept": 0, "Question": 0, "Insight": 0, "Resource": 0,
+            "Person": 0, "unchanged": 0, "errors": 0
+        }
+
+        # 8개 Core 타입 + Person
+        all_pkm_types = ["Goal", "Project", "Task", "Topic", "Concept", "Question", "Insight", "Resource", "Person"]
+
+        for entity in entities:
+            try:
+                uuid = entity["uuid"]
+                name = entity["name"]
+                summary = entity.get("summary", "")
+                current_labels = entity.get("current_labels", [])
+
+                # 새 타입 결정
+                new_type = classify_entity_to_pkm_type(name, summary)
+
+                # 현재 PKM 타입 확인
+                current_pkm_type = None
+                for label in current_labels:
+                    if label in all_pkm_types:
+                        current_pkm_type = label
+                        break
+
+                # 타입이 같으면 스킵
+                if current_pkm_type == new_type:
+                    stats["unchanged"] += 1
+                    continue
+
+                # 기존 PKM 레이블 제거 후 새 레이블 추가
+                remove_labels = [t for t in all_pkm_types if t in current_labels and t != new_type]
+
+                if remove_labels:
+                    remove_cypher = f"""
+                    MATCH (e:Entity {{uuid: $uuid}})
+                    REMOVE e:{':'.join(remove_labels)}
+                    """
+                    client.query(remove_cypher, {"uuid": uuid})
+
+                # 새 레이블 추가
+                add_cypher = f"""
+                MATCH (e:Entity {{uuid: $uuid}})
+                SET e:{new_type}, e.pkm_type = $pkm_type
+                """
+                client.query(add_cypher, {"uuid": uuid, "pkm_type": new_type})
+
+                stats[new_type] += 1
+                logger.debug(f"Reclassified '{name}': {current_pkm_type} -> {new_type}")
+
+            except Exception as e:
+                logger.error(f"Error reclassifying {entity.get('name')}: {e}")
+                stats["errors"] += 1
+
+        total_processed = sum(stats[t] for t in all_pkm_types)
+        logger.info(f"✅ Reclassified {total_processed} entities: {stats}")
+
+        return {
+            "status": "success",
+            "processed": total_processed,
+            "unchanged": stats["unchanged"],
+            "errors": stats["errors"],
+            "stats": {k: v for k, v in stats.items() if k in all_pkm_types}
+        }
+
+    except Exception as e:
+        logger.error(f"Reclassification error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class EntityClusterDetailRequest(BaseModel):
     """클러스터 상세 조회 요청"""
     cluster_name: str
