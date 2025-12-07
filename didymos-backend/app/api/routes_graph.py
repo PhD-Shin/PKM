@@ -1158,16 +1158,20 @@ async def get_entity_note_graph(
     try:
         # 폴더 필터 조건
         folder_condition = "n.note_id STARTS WITH $folder_prefix AND" if folder_prefix else ""
+        folder_condition2 = "n2.note_id STARTS WITH $folder_prefix AND" if folder_prefix else ""
 
         # Step 1: 여러 노트에서 언급된 엔티티들 조회
+        # 두 가지 경로 지원:
+        # 1. Note -[:MENTIONS]-> Entity (hybrid_graphiti_service가 생성한 직접 관계)
+        # 2. Episodic -[:MENTIONS]-> Entity (Graphiti가 생성한 관계, Note.note_id = Episodic.name)
         cypher_entities = f"""
+        // 방법1: 직접 MENTIONS 관계
         MATCH (n:Note)-[:MENTIONS]->(e:Entity)
         WHERE {folder_condition} e.name IS NOT NULL
-        WITH e, collect(DISTINCT n.note_id) as note_ids, count(DISTINCT n) as note_count
-        WHERE note_count >= $min_note_connections
-        RETURN e.uuid as uuid,
-               e.name as name,
-               e.summary as summary,
+        WITH e, collect(DISTINCT n.note_id) as direct_notes
+
+        // 방법2: Episodic 통한 연결 (UNION)
+        RETURN e.uuid as uuid, e.name as name, e.summary as summary,
                CASE
                    WHEN e:Goal THEN 'Goal'
                    WHEN e:Project THEN 'Project'
@@ -1179,10 +1183,32 @@ async def get_entity_note_graph(
                    WHEN e:Person THEN 'Person'
                    ELSE 'Topic'
                END as type,
-               note_ids,
-               note_count
-        ORDER BY note_count DESC
-        LIMIT $limit
+               direct_notes as note_ids,
+               size(direct_notes) as note_count
+
+        UNION
+
+        // Episodic 기반 연결 (Episodic.name = Note.note_id)
+        MATCH (ep:Episodic)-[:MENTIONS]->(e:Entity)
+        WHERE e.name IS NOT NULL AND ep.name IS NOT NULL
+        MATCH (n2:Note)
+        WHERE {folder_condition2} n2.note_id = ep.name
+        WITH e, collect(DISTINCT n2.note_id) as episodic_notes
+        WHERE size(episodic_notes) > 0
+        RETURN e.uuid as uuid, e.name as name, e.summary as summary,
+               CASE
+                   WHEN e:Goal THEN 'Goal'
+                   WHEN e:Project THEN 'Project'
+                   WHEN e:Task THEN 'Task'
+                   WHEN e:Concept THEN 'Concept'
+                   WHEN e:Question THEN 'Question'
+                   WHEN e:Insight THEN 'Insight'
+                   WHEN e:Resource THEN 'Resource'
+                   WHEN e:Person THEN 'Person'
+                   ELSE 'Topic'
+               END as type,
+               episodic_notes as note_ids,
+               size(episodic_notes) as note_count
         """
 
         params = {
@@ -1205,6 +1231,30 @@ async def get_entity_note_graph(
                 "insights": {}
             }
 
+        # UNION 결과에서 같은 엔티티의 note_ids를 합쳐야 함
+        entity_map = {}  # uuid -> {name, summary, type, note_ids}
+        for row in entities_result:
+            uuid = row["uuid"]
+            if uuid not in entity_map:
+                entity_map[uuid] = {
+                    "name": row["name"],
+                    "summary": row.get("summary", ""),
+                    "type": row["type"],
+                    "note_ids": set(row["note_ids"] or [])
+                }
+            else:
+                # 기존 엔티티에 note_ids 추가
+                entity_map[uuid]["note_ids"].update(row["note_ids"] or [])
+
+        # min_note_connections 필터 적용 및 정렬
+        filtered_entities = [
+            (uuid, data) for uuid, data in entity_map.items()
+            if len(data["note_ids"]) >= min_note_connections
+        ]
+        # note_count 내림차순 정렬 후 limit 적용
+        filtered_entities.sort(key=lambda x: len(x[1]["note_ids"]), reverse=True)
+        filtered_entities = filtered_entities[:limit]
+
         # Entity 데이터 구성
         entities = []
         all_note_ids = set()
@@ -1223,23 +1273,24 @@ async def get_entity_note_graph(
             "Person": "#e67e22",    # 오렌지색 - 인물 (하위호환)
         }
 
-        for row in entities_result:
+        for uuid, data in filtered_entities:
+            note_ids_list = list(data["note_ids"])
             entity = {
-                "id": row["uuid"],
-                "name": row["name"] or "Unknown",
-                "summary": row.get("summary", ""),
-                "type": row["type"],
-                "color": type_colors.get(row["type"], "#95a5a6"),
-                "connected_notes": row["note_ids"],
-                "note_count": row["note_count"]
+                "id": uuid,
+                "name": data["name"] or "Unknown",
+                "summary": data["summary"],
+                "type": data["type"],
+                "color": type_colors.get(data["type"], "#95a5a6"),
+                "connected_notes": note_ids_list,
+                "note_count": len(note_ids_list)
             }
             entities.append(entity)
 
             # Entity-Note 엣지 추가
-            for note_id in row["note_ids"]:
+            for note_id in note_ids_list:
                 all_note_ids.add(note_id)
                 entity_note_edges.append({
-                    "entity_id": row["uuid"],
+                    "entity_id": uuid,
                     "note_id": note_id
                 })
 
