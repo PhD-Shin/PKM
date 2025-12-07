@@ -59,14 +59,26 @@ def init_indices():
 def create_indexes(client):
     """
     고유 제약/인덱스 생성 (존재하면 무시)
+    PKM Core Ontology v2 - 8개 타입 + Person (하위 호환성)
     """
     constraints = [
+        # 기본 노드
         "CREATE CONSTRAINT note_id IF NOT EXISTS FOR (n:Note) REQUIRE n.note_id IS UNIQUE",
         "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE",
         "CREATE CONSTRAINT vault_id IF NOT EXISTS FOR (v:Vault) REQUIRE v.id IS UNIQUE",
-        "CREATE CONSTRAINT topic_id IF NOT EXISTS FOR (t:Topic) REQUIRE t.id IS UNIQUE",
+
+        # PKM Core Ontology v2 (8개 타입)
+        "CREATE CONSTRAINT goal_id IF NOT EXISTS FOR (g:Goal) REQUIRE g.id IS UNIQUE",
         "CREATE CONSTRAINT project_id IF NOT EXISTS FOR (p:Project) REQUIRE p.id IS UNIQUE",
         "CREATE CONSTRAINT task_id IF NOT EXISTS FOR (t:Task) REQUIRE t.id IS UNIQUE",
+        "CREATE CONSTRAINT topic_id IF NOT EXISTS FOR (t:Topic) REQUIRE t.id IS UNIQUE",
+        "CREATE CONSTRAINT concept_id IF NOT EXISTS FOR (c:Concept) REQUIRE c.id IS UNIQUE",
+        "CREATE CONSTRAINT question_id IF NOT EXISTS FOR (q:Question) REQUIRE q.id IS UNIQUE",
+        "CREATE CONSTRAINT insight_id IF NOT EXISTS FOR (i:Insight) REQUIRE i.id IS UNIQUE",
+        "CREATE CONSTRAINT resource_id IF NOT EXISTS FOR (r:Resource) REQUIRE r.id IS UNIQUE",
+
+        # 하위 호환성 (기존 Person)
+        "CREATE CONSTRAINT person_id IF NOT EXISTS FOR (p:Person) REQUIRE p.id IS UNIQUE",
     ]
     for cypher in constraints:
         try:

@@ -26,8 +26,19 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# PKM 온톨로지 타입
-PKM_TYPES = ["Topic", "Project", "Task", "Person"]
+# PKM Core Ontology v2 타입 (8개)
+# - Goal: 최상위 목표 (OKR의 O)
+# - Project: Goal을 달성하기 위한 중간 단위
+# - Task: 실행 가능한 최소 단위
+# - Topic: 주제/개념 카테고리
+# - Concept: 구체적 개념/용어 (Topic의 하위)
+# - Question: 연구 질문 또는 미해결 의문
+# - Insight: 발견/통찰/결론
+# - Resource: 외부 자료 참조 (논문, 책, URL)
+PKM_TYPES = ["Goal", "Project", "Task", "Topic", "Concept", "Question", "Insight", "Resource"]
+
+# 하위 호환성을 위해 Person도 지원 (기존 데이터)
+PKM_TYPES_LEGACY = ["Person"]
 
 # 엔티티 이름 최소 길이 (너무 짧은 이름 제외)
 MIN_ENTITY_NAME_LENGTH = 2
@@ -67,57 +78,123 @@ def is_valid_entity(name: str) -> bool:
 
 
 # 엔티티 이름 기반 분류 규칙 (LLM 호출 없이 빠른 분류)
-# 더 정교한 분류가 필요하면 LLM 사용
+# PKM Core Ontology v2 - 8개 타입 분류
 CLASSIFICATION_RULES = {
-    "Person": [
-        # 사람 이름 패턴
-        lambda name: any(suffix in name for suffix in ["님", "씨", "교수", "박사", "선생"]),
-        lambda name: name.endswith(("수", "호", "민", "준", "진", "현", "석", "영", "훈")),  # 한국 이름 끝글자
+    "Goal": [
+        # 최상위 목표 (OKR의 O)
+        lambda name: any(kw in name.lower() for kw in ["목표", "goal", "objective", "vision", "미션", "mission"]),
+        lambda name: any(kw in name for kw in ["완성", "달성", "성취"]),
     ],
     "Project": [
-        lambda name: any(kw in name.lower() for kw in ["프로젝트", "project", "개발", "구현", "시스템"]),
-        lambda name: name.startswith(("PKM", "Didymos", "AI")),
+        # Goal을 달성하기 위한 중간 단위
+        lambda name: any(kw in name.lower() for kw in ["프로젝트", "project", "개발", "구현", "시스템", "chapter", "phase"]),
+        lambda name: name.startswith(("PKM", "Didymos", "MVP")),
     ],
     "Task": [
-        lambda name: any(kw in name.lower() for kw in ["todo", "task", "작업", "할일", "수정", "추가", "구현해야"]),
+        # 실행 가능한 최소 단위
+        lambda name: any(kw in name.lower() for kw in ["todo", "task", "작업", "할일", "수정", "추가", "구현해야", "작성", "검토"]),
+        lambda name: name.startswith(("[ ]", "[x]", "TODO", "FIXME")),
+    ],
+    "Question": [
+        # 연구 질문 또는 미해결 의문
+        lambda name: name.endswith("?"),
+        lambda name: any(kw in name.lower() for kw in ["질문", "question", "의문", "궁금", "어떻게", "왜", "무엇"]),
+        lambda name: name.startswith(("RQ", "Q:", "Q.")),
+    ],
+    "Insight": [
+        # 발견/통찰/결론
+        lambda name: any(kw in name.lower() for kw in ["인사이트", "insight", "발견", "결론", "conclusion", "finding", "배움", "깨달음"]),
+        lambda name: name.startswith(("💡", "✨", "Insight:", "Finding:")),
+    ],
+    "Resource": [
+        # 외부 자료 참조 (논문, 책, URL)
+        lambda name: any(kw in name.lower() for kw in ["논문", "paper", "책", "book", "article", "url", "링크", "참고", "reference"]),
+        lambda name: name.startswith(("http", "www.", "📚", "📄")),
+        lambda name: any(ext in name.lower() for ext in [".pdf", ".epub", "arxiv", "doi:"]),
+    ],
+    "Concept": [
+        # 구체적 개념/용어 (Topic의 하위)
+        # 특정 기술 용어, 방법론, 알고리즘 등
+        lambda name: any(kw in name.lower() for kw in [
+            "algorithm", "알고리즘", "method", "방법", "technique", "기법",
+            "architecture", "아키텍처", "pattern", "패턴", "model", "모델",
+            "framework", "프레임워크", "protocol", "프로토콜"
+        ]),
+        # 대문자로 시작하는 기술 용어 (예: Transformer, BERT, GPT)
+        lambda name: len(name) > 2 and name[0].isupper() and any(c.isupper() for c in name[1:]),
     ],
     # Topic은 기본값 (다른 타입에 해당하지 않으면 Topic)
+    # 기존 Person 지원 (하위 호환성)
+    "Person": [
+        lambda name: any(suffix in name for suffix in ["님", "씨", "교수", "박사", "선생"]),
+        lambda name: name.endswith(("수", "호", "민", "준", "진", "현", "석", "영", "훈")),
+    ],
 }
 
 
 def classify_entity_to_pkm_type(entity_name: str, entity_summary: str = None) -> str:
     """
-    엔티티 이름/요약을 기반으로 PKM 타입 분류
+    엔티티 이름/요약을 기반으로 PKM 타입 분류 (Core Ontology v2)
 
     Args:
         entity_name: 엔티티 이름
         entity_summary: Graphiti가 생성한 엔티티 요약
 
     Returns:
-        PKM 타입 (Topic, Project, Task, Person)
+        PKM 타입 (Goal, Project, Task, Topic, Concept, Question, Insight, Resource)
     """
     name_lower = entity_name.lower()
 
-    # 규칙 기반 분류
-    for pkm_type, rules in CLASSIFICATION_RULES.items():
-        for rule in rules:
-            try:
-                if rule(entity_name):
-                    return pkm_type
-            except Exception:
-                continue
+    # 규칙 기반 분류 (우선순위 순서대로 체크)
+    # 순서: Goal > Question > Insight > Resource > Task > Project > Concept > Person > Topic
+    priority_order = ["Goal", "Question", "Insight", "Resource", "Task", "Project", "Concept", "Person"]
 
-    # 요약에서 힌트 찾기
+    for pkm_type in priority_order:
+        if pkm_type in CLASSIFICATION_RULES:
+            for rule in CLASSIFICATION_RULES[pkm_type]:
+                try:
+                    if rule(entity_name):
+                        return pkm_type
+                except Exception:
+                    continue
+
+    # 요약에서 힌트 찾기 (8개 타입)
     if entity_summary:
         summary_lower = entity_summary.lower()
-        if any(kw in summary_lower for kw in ["사람", "person", "연구원", "학생", "팀원"]):
-            return "Person"
-        if any(kw in summary_lower for kw in ["프로젝트", "project", "개발 중", "구현"]):
-            return "Project"
-        if any(kw in summary_lower for kw in ["해야 할", "완료해야", "task", "todo"]):
+
+        # Goal 패턴
+        if any(kw in summary_lower for kw in ["목표", "goal", "objective", "vision", "장기 계획"]):
+            return "Goal"
+
+        # Question 패턴
+        if any(kw in summary_lower for kw in ["질문", "question", "의문", "연구 문제", "탐구"]):
+            return "Question"
+
+        # Insight 패턴
+        if any(kw in summary_lower for kw in ["발견", "insight", "결론", "깨달음", "배움", "통찰"]):
+            return "Insight"
+
+        # Resource 패턴
+        if any(kw in summary_lower for kw in ["논문", "paper", "책", "book", "참고 자료", "출처", "링크"]):
+            return "Resource"
+
+        # Task 패턴
+        if any(kw in summary_lower for kw in ["해야 할", "완료해야", "task", "todo", "작업", "실행"]):
             return "Task"
 
-    # 기본값: Topic
+        # Project 패턴
+        if any(kw in summary_lower for kw in ["프로젝트", "project", "개발 중", "구현", "진행 중"]):
+            return "Project"
+
+        # Concept 패턴 (기술 용어, 방법론)
+        if any(kw in summary_lower for kw in ["개념", "concept", "방법", "method", "기법", "알고리즘", "기술"]):
+            return "Concept"
+
+        # Person 패턴 (하위 호환성)
+        if any(kw in summary_lower for kw in ["사람", "person", "연구원", "학생", "팀원", "저자"]):
+            return "Person"
+
+    # 기본값: Topic (주제 카테고리)
     return "Topic"
 
 
@@ -140,10 +217,12 @@ async def add_pkm_labels_to_graphiti_entities(
     client = get_neo4j_client()
 
     try:
-        # Step 1: PKM 레이블이 없는 Entity 조회 (Graphiti uses 'Entity' label)
+        # Step 1: PKM 레이블이 없는 Entity 조회 (Core Ontology v2 - 8개 타입)
         cypher_find = """
         MATCH (e:Entity)
-        WHERE NOT e:Topic AND NOT e:Project AND NOT e:Task AND NOT e:Person
+        WHERE NOT e:Goal AND NOT e:Project AND NOT e:Task AND NOT e:Topic
+          AND NOT e:Concept AND NOT e:Question AND NOT e:Insight AND NOT e:Resource
+          AND NOT e:Person
         RETURN e.uuid as uuid, e.name as name, e.summary as summary
         LIMIT $batch_size
         """
@@ -160,8 +239,12 @@ async def add_pkm_labels_to_graphiti_entities(
 
         logger.info(f"Found {len(entities)} Entities to classify")
 
-        # Step 2: 각 엔티티 분류 및 레이블 추가
-        stats = {"Topic": 0, "Project": 0, "Task": 0, "Person": 0, "errors": 0}
+        # Step 2: 각 엔티티 분류 및 레이블 추가 (Core Ontology v2 - 8개 타입 + Person)
+        stats = {
+            "Goal": 0, "Project": 0, "Task": 0, "Topic": 0,
+            "Concept": 0, "Question": 0, "Insight": 0, "Resource": 0,
+            "Person": 0, "errors": 0
+        }
 
         for entity in entities:
             try:
@@ -191,7 +274,9 @@ async def add_pkm_labels_to_graphiti_entities(
                 logger.error(f"Error adding label to {entity.get('name')}: {e}")
                 stats["errors"] += 1
 
-        total_processed = sum(stats[t] for t in PKM_TYPES)
+        # Core Ontology v2 - 8개 타입 + Person
+        all_types = PKM_TYPES + PKM_TYPES_LEGACY
+        total_processed = sum(stats.get(t, 0) for t in all_types)
         logger.info(f"✅ PKM labels added: {stats}")
 
         return {
@@ -210,11 +295,13 @@ async def add_pkm_labels_to_graphiti_entities(
 
 
 async def _count_unlabeled_entities(client) -> int:
-    """PKM 레이블이 없는 Entity 수 조회"""
+    """PKM 레이블이 없는 Entity 수 조회 (Core Ontology v2 - 8개 타입)"""
     try:
         result = client.query("""
             MATCH (e:Entity)
-            WHERE NOT e:Topic AND NOT e:Project AND NOT e:Task AND NOT e:Person
+            WHERE NOT e:Goal AND NOT e:Project AND NOT e:Task AND NOT e:Topic
+              AND NOT e:Concept AND NOT e:Question AND NOT e:Insight AND NOT e:Resource
+              AND NOT e:Person
             RETURN count(e) as count
         """, {})
         return result[0]["count"] if result else 0
@@ -347,7 +434,9 @@ async def migrate_graphiti_to_hybrid(
 
         if label_result.get("processed", 0) > 0:
             results["pkm_labels"]["total_processed"] += label_result["processed"]
-            for pkm_type in PKM_TYPES:
+            # Core Ontology v2 - 8개 타입 + Person
+            all_types = PKM_TYPES + PKM_TYPES_LEGACY
+            for pkm_type in all_types:
                 prev = results["pkm_labels"]["stats"].get(pkm_type, 0)
                 results["pkm_labels"]["stats"][pkm_type] = prev + label_result.get("stats", {}).get(pkm_type, 0)
 

@@ -1000,6 +1000,7 @@ async def debug_entity_relations(
 async def reclassify_entities_to_core8(
     batch_size: int = Query(100, description="한 번에 처리할 엔티티 수", ge=10, le=1000),
     force_all: bool = Query(False, description="이미 분류된 엔티티도 재분류할지 여부"),
+    use_llm: bool = Query(True, description="LLM 기반 분류 사용 (더 정확, 느림)"),
     client: Neo4jBoltClient = Depends(get_neo4j_client)
 ) -> Dict[str, Any]:
     """
@@ -1008,6 +1009,8 @@ async def reclassify_entities_to_core8(
     - Goal, Project, Task, Topic, Concept, Question, Insight, Resource + Person
     - force_all=False: 기존 4개 타입(Topic, Project, Task, Person)만 있는 엔티티만 재분류
     - force_all=True: 모든 엔티티 재분류
+    - use_llm=True: LLM으로 더 정확하게 분류 (느리지만 정확)
+    - use_llm=False: 규칙 기반 분류 (빠르지만 대부분 Topic으로 분류)
     """
     from app.services.hybrid_graphiti_service import classify_entity_to_pkm_type
 
@@ -1043,7 +1046,7 @@ async def reclassify_entities_to_core8(
                 "processed": 0
             }
 
-        logger.info(f"Found {len(entities)} entities to reclassify")
+        logger.info(f"Found {len(entities)} entities to reclassify (use_llm={use_llm})")
 
         # Step 2: 각 엔티티 재분류
         stats = {
@@ -1055,6 +1058,52 @@ async def reclassify_entities_to_core8(
         # 8개 Core 타입 + Person
         all_pkm_types = ["Goal", "Project", "Task", "Topic", "Concept", "Question", "Insight", "Resource", "Person"]
 
+        # LLM 분류 함수
+        async def classify_with_llm(name: str, summary: str) -> str:
+            """LLM으로 엔티티 분류"""
+            from openai import OpenAI
+            from app.config import settings
+
+            client_openai = OpenAI(api_key=settings.openai_api_key)
+
+            prompt = f"""Classify this entity into one of the PKM (Personal Knowledge Management) types.
+
+Entity name: {name}
+Entity summary: {summary or 'N/A'}
+
+PKM Types (choose ONE):
+- Goal: Long-term objectives, vision, mission (e.g., "PhD completion", "Become expert in AI")
+- Project: Mid-term work units to achieve goals (e.g., "PKM System Development", "Research Paper Writing")
+- Task: Actionable items, to-dos (e.g., "Fix bug", "Review PR", "Submit report")
+- Topic: Subject areas, categories, domains (e.g., "Machine Learning", "Knowledge Graphs")
+- Concept: Specific concepts, methods, techniques (e.g., "Transformer", "HDBSCAN", "RAG")
+- Question: Research questions, open inquiries (e.g., "How to improve accuracy?")
+- Insight: Discoveries, conclusions, learnings (e.g., "Key finding", "Important realization")
+- Resource: External references (e.g., papers, books, URLs, tools)
+- Person: People, authors, team members
+
+Respond with ONLY the type name (e.g., "Concept" or "Topic"). No explanation."""
+
+            try:
+                response = client_openai.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=10,
+                    temperature=0
+                )
+                result = response.choices[0].message.content.strip()
+                # 유효한 타입인지 확인
+                if result in all_pkm_types:
+                    return result
+                # 부분 매칭 시도
+                for t in all_pkm_types:
+                    if t.lower() in result.lower():
+                        return t
+                return "Topic"  # 기본값
+            except Exception as e:
+                logger.warning(f"LLM classification failed for '{name}': {e}")
+                return classify_entity_to_pkm_type(name, summary)
+
         for entity in entities:
             try:
                 uuid = entity["uuid"]
@@ -1063,7 +1112,11 @@ async def reclassify_entities_to_core8(
                 current_labels = entity.get("current_labels", [])
 
                 # 새 타입 결정
-                new_type = classify_entity_to_pkm_type(name, summary)
+                if use_llm:
+                    import asyncio
+                    new_type = await classify_with_llm(name, summary)
+                else:
+                    new_type = classify_entity_to_pkm_type(name, summary)
 
                 # 현재 PKM 타입 확인
                 current_pkm_type = None
@@ -1109,7 +1162,8 @@ async def reclassify_entities_to_core8(
             "processed": total_processed,
             "unchanged": stats["unchanged"],
             "errors": stats["errors"],
-            "stats": {k: v for k, v in stats.items() if k in all_pkm_types}
+            "stats": {k: v for k, v in stats.items() if k in all_pkm_types},
+            "method": "llm" if use_llm else "rules"
         }
 
     except Exception as e:

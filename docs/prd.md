@@ -2,8 +2,8 @@
 
 > AI-Powered 2nd Brain for Obsidian - 시간 인식 지식 그래프 + GraphRAG 검색 엔진
 
-**최종 업데이트**: 2025-12-02
-**현재 단계**: MVP 완료, Phase 12 (GraphRAG 검색 강화) 준비 중
+**최종 업데이트**: 2025-12-07
+**현재 단계**: Phase 16 완료 (PKM Core Ontology v2 - 8개 타입)
 **비즈니스 모델**: Obsidian 플러그인 구독 ($7-15/월)
 **핵심 기술**: Graphiti (저장/추출) + neo4j-graphrag (검색/질의)
 
@@ -354,9 +354,9 @@ Didymos with SKOS: 개념 + 계층 구조 → 진정한 온톨로지 ✅
 - 클러스터링 시 계층 구조 활용
 - Graph View에 상위/하위 개념 시각화
 
-### 3.4 Phase 14: ToolsRetriever 통합 (MVP 핵심)
+### 3.4 Phase 14: ToolsRetriever 통합 (MVP 핵심) ✅
 
-> ⚠️ **MVP 필수**: 자연어 질의 → 자동 검색 전략 선택이 "내 2nd brain에게 묻기"의 핵심 UX
+> ✅ **완료**: 자연어 질의 → 자동 검색 전략 선택이 "내 2nd brain에게 묻기"의 핵심 UX
 
 **목표**: 사용자가 자연어로 질문하면 LLM이 적절한 검색 도구 자동 선택
 
@@ -365,19 +365,243 @@ Didymos with SKOS: 개념 + 계층 구조 → 진정한 온톨로지 ✅
 목표: "최근 AI 관련 프로젝트 알려줘" → LLM이 자동으로 적절한 검색 조합
 ```
 
-**구현 계획**:
+**구현 완료**:
 - ToolsRetriever 설정 (Vector + Cypher + Temporal 조합)
 - 자연어 질의 UI (Chat 형태 또는 Command Palette)
 - LLM이 질의 분석 → 적절한 Retriever 자동 선택
 
-### 3.5 Phase 15+: 향후 로드맵 (Post-MVP)
+### 3.5 Phase 15: Thinking Insights & 2nd Brain 강화 (진행 중)
+
+> 🚧 **진행 중**: Palantir Foundry 스타일의 지식 분석 인사이트 제공
+
+**목표**: 지식 그래프에서 실행 가능한 인사이트 도출 + 2nd Brain 뷰 개선
+
+#### 3.5.1 Thinking Insights API (Palantir Foundry 스타일)
+
+```
+기존: 클러스터만 시각화
+목표: 집중 영역, 연결 개념, 고립 영역, 탐구 제안 + 시간 트렌드 + 건강도 점수
+```
+
+**완료된 기능**:
+- ✅ Entity-Note Graph API (`/vault/entity-note-graph`)
+  - 노트 간 연결성을 공유 엔티티 기반으로 시각화
+  - vis-network 포맷 (nodes[], edges[])
+
+- ✅ Thinking Insights API (`/vault/thinking-insights`)
+  - **Focus Areas**: 가장 많이 언급된 집중 영역
+  - **Bridge Concepts**: 여러 영역을 연결하는 핵심 개념
+  - **Isolated Areas**: 연결이 부족한 고립 영역
+  - **Exploration Suggestions**: AI 기반 탐구 제안
+
+**구현 예정**:
+- [ ] **Time-based Trends** (시간 기반 트렌드)
+  ```json
+  {
+    "time_trends": {
+      "recent_topics": ["AI Ethics", "RAG"],      // 최근 7일
+      "declining_topics": ["Web3", "NFT"],        // 30일 전 대비 감소
+      "emerging_topics": ["LLM Fine-tuning"],     // 새로 등장
+      "trend_period": "7d vs 30d"
+    }
+  }
+  ```
+
+- [ ] **Knowledge Health Score** (지식 건강도)
+  ```json
+  {
+    "health_score": {
+      "overall": 78,
+      "connection_density": 0.65,    // 연결 밀도 (0~1)
+      "isolation_ratio": 0.12,       // 고립 노트 비율 (낮을수록 좋음)
+      "completeness_score": 0.82,    // 완성도 (태그/링크 충실도)
+      "recommendations": [
+        "고립 노트 15개를 연결하세요",
+        "Research 클러스터에 더 집중하세요"
+      ]
+    }
+  }
+  ```
+
+#### 3.5.2 2nd Brain UI 개선
+
+| 기능 | 상태 | 설명 |
+|------|------|------|
+| Insights 패널 | ✅ 완료 | Focus Areas, Bridge Concepts 표시 |
+| 노트 직접 열기 | 📋 예정 | 클릭 시 Obsidian에서 노트 열기 |
+| Entity-Note Graph 토글 | 📋 예정 | Clusters ↔ Entity-Note 뷰 전환 |
+| Insights 캐싱 | 📋 예정 | TTL 5분, 반응성 개선 |
+| 탐구 제안 액션 | 📋 예정 | "이 영역 연결하기" 버튼 |
+
+**UI 구현 계획**:
+```typescript
+// 노트 직접 열기
+onFocusAreaClick(area: FocusArea) {
+  const notePath = area.sample_notes[0];
+  this.app.workspace.openLinkText(notePath, '');
+}
+
+// Entity-Note Graph 토글
+toggleGraphMode() {
+  this.graphMode = this.graphMode === 'clusters' ? 'entity-note' : 'clusters';
+  this.loadGraph();
+}
+
+// Insights 캐싱
+private insightsCache: { data: ThinkingInsights; timestamp: number } | null;
+private INSIGHTS_CACHE_TTL = 5 * 60 * 1000; // 5분
+```
+
+### 3.6 Phase 16: PKM Core Ontology v2 (8 노드 확장)
+
+> 🚀 **다음 단계**: 현재 4개 타입(Topic, Project, Task, Person)에서 8개 Core 타입으로 확장
+
+#### 3.6.1 Core Ontology v2 노드 정의
+
+| 노드 타입 | 설명 | 주요 속성 | 예시 |
+|-----------|------|----------|------|
+| **Goal** | 최상위 목표 (OKR의 O) | name, description, deadline, status | "PhD 논문 완성", "창업 준비" |
+| **Project** | Goal을 달성하기 위한 중간 단위 | name, status, deadline, goal_id | "Chapter 3 작성", "MVP 개발" |
+| **Task** | 실행 가능한 최소 단위 | title, status, priority, due_date | "서론 작성", "API 구현" |
+| **Topic** | 주제/개념 카테고리 | name, summary, importance_score | "Machine Learning", "PKM" |
+| **Concept** | 구체적 개념/용어 | name, definition, skos_broader | "Transformer", "Zettelkasten" |
+| **Question** | 연구 질문 또는 미해결 의문 | text, status, priority | "RAG가 hallucination을 줄이나?" |
+| **Insight** | 발견/통찰/결론 | text, evidence_notes[], confidence | "HDBSCAN이 K-means보다 효과적" |
+| **Resource** | 외부 자료 참조 | name, type, url, doi | 논문, 책, 웹페이지 |
+
+#### 3.6.2 Core Ontology v2 관계 정의
+
+```cypher
+// Goal-Project-Task 계층
+(:Goal)-[:REALIZED_BY]->(:Project)
+(:Project)-[:HAS_TASK]->(:Task)
+
+// Topic-Concept 의미 구조 (SKOS)
+(:Topic)-[:HAS_CONCEPT]->(:Concept)
+(:Concept)-[:BROADER]->(:Concept)
+(:Concept)-[:NARROWER]->(:Concept)
+(:Concept)-[:RELATED]->(:Concept)
+
+// Question-Insight 지식 순환
+(:Topic)-[:HAS_QUESTION]->(:Question)
+(:Question)-[:ADDRESSED_BY]->(:Insight)
+(:Note)-[:RAISES_QUESTION]->(:Question)
+(:Note)-[:EVIDENCES_INSIGHT]->(:Insight)
+
+// Resource 참조
+(:Note)-[:REFERS_TO_RESOURCE]->(:Resource)
+(:Insight)-[:SUPPORTED_BY]->(:Resource)
+```
+
+#### 3.6.3 LLM 추출 프롬프트 (Core v2)
+
+```python
+CORE_V2_EXTRACTION_PROMPT = """
+당신은 PKM(Personal Knowledge Management) 전문가입니다.
+아래 노트에서 8가지 엔티티 타입과 관계를 추출하세요.
+
+## 엔티티 타입
+1. Goal: 장기 목표 (OKR의 O, 예: "PhD 완성")
+2. Project: 중간 단위 프로젝트 (예: "Chapter 3 작성")
+3. Task: 실행 가능한 작업 (예: "서론 초안 작성")
+4. Topic: 주제 카테고리 (예: "Machine Learning")
+5. Concept: 구체적 개념 (예: "Transformer Architecture")
+6. Question: 연구 질문 (예: "RAG가 hallucination을 줄이나?")
+7. Insight: 발견/결론 (예: "HDBSCAN이 K-means보다 효과적")
+8. Resource: 외부 자료 (예: "Attention Is All You Need 논문")
+
+## 관계 타입
+- REALIZED_BY: Goal→Project
+- HAS_TASK: Project→Task
+- HAS_CONCEPT: Topic→Concept
+- BROADER/NARROWER: Concept 계층
+- HAS_QUESTION: Topic→Question
+- ADDRESSED_BY: Question→Insight
+- RAISES_QUESTION: Note→Question
+- EVIDENCES_INSIGHT: Note→Insight
+- REFERS_TO_RESOURCE: Note→Resource
+
+## 노트 내용
+{note_content}
+
+## 출력 (JSON)
+{
+  "entities": [
+    {"name": "...", "type": "Goal|Project|Task|Topic|Concept|Question|Insight|Resource", "properties": {...}}
+  ],
+  "relationships": [
+    {"source": "...", "target": "...", "type": "REALIZED_BY|HAS_TASK|...", "properties": {...}}
+  ]
+}
+"""
+```
+
+### 3.7 🎯 폴더 기반 Core 8 전략 (권장)
+
+> **결론**: Research Pack, Solo Maker Pack은 Core 8으로 충분히 표현 가능.
+> Obsidian 폴더 구조가 자연스러운 컨텍스트 분리 역할을 함.
+
+#### 폴더별 Core 8 적용
+
+```
+Obsidian Vault/
+├── 1-Research/          → Core 8 (Question, Insight 중심)
+├── 2-Business/          → Core 8 (Goal, Project, Task 중심)
+├── 3-Creative/          → Core 8 (Topic, Concept 중심)
+└── 4-Resources/         → Core 8 (Resource 중심)
+```
+
+#### Core 8 → Research/Maker 매핑
+
+| Research 개념 | Core 8 | Maker 개념 | Core 8 |
+|--------------|--------|-----------|--------|
+| ResearchQuestion | Question | Idea | Concept |
+| Hypothesis | Concept | Feature | Topic |
+| Experiment | Project | Feedback | Insight |
+| Result | Insight | Product | Project |
+| Paper | Resource | Channel | Resource |
+
+### 3.8 Phase 17: Research Pack (🔸 Optional - Deferred)
+
+> ⚠️ **상태**: Core 8으로 대부분 커버 가능, 베타 피드백 기반 결정
+
+<details>
+<summary>📚 Research Pack 상세 (클릭하여 펼치기)</summary>
+
+| 노드 타입 | 설명 | Core 8 대안 |
+|-----------|------|------------|
+| **ResearchQuestion** | 핵심 연구 질문 | Question |
+| **Hypothesis** | 검증 가능한 가설 | Concept |
+| **Experiment** | 실험/연구 설계 | Project |
+| **Result** | 실험 결과 | Insight |
+| **Paper** | 논문 | Resource |
+
+</details>
+
+### 3.10 Phase 18: Solo Maker Pack (🔸 Optional - Deferred)
+
+> ⚠️ **상태**: Core 8으로 대부분 커버 가능, 베타 피드백 기반 결정
+
+<details>
+<summary>🚀 Solo Maker Pack 상세 (클릭하여 펼치기)</summary>
+
+| 노드 타입 | 설명 | Core 8 대안 |
+|-----------|------|------------|
+| **Idea** | 초기 아이디어 | Concept |
+| **Feature** | 기능 명세 | Topic |
+| **Feedback** | 사용자 피드백 | Insight |
+| **Product** | 제품/서비스 | Project |
+| **Channel** | 배포 채널 | Resource |
+
+</details>
+
+### 3.11 Phase 19+: 향후 로드맵
 
 | Phase | 기능 | 설명 |
 |-------|------|------|
-| **15** | Person/Source 노드 분리 | FOAF 기반, YAML front matter 파싱 |
-| **16** | Project/Task 통합 | PARA 폴더 구조 연동 |
-| **17** | PROV-O Activity | 아이디어 계보 추적 (Reading → Summarizing → Brainstorming) |
-| **18** | 팀 공유 기능 | 멀티 사용자 지원 |
+| **19** | PROV-O Activity | 아이디어 계보 추적 (Reading → Summarizing → Brainstorming) |
+| **20** | 팀 공유 기능 | 멀티 사용자 지원, Collaborative KG |
+| **21** | AI Agent 통합 | 자율 리서치 에이전트 |
 
 ---
 
@@ -751,7 +975,65 @@ GET    /temporal/insights/recent?days=7
        최근 N일간 추가/변경된 엔티티/관계
 ```
 
-### 9.3 클러스터 API 응답 형식
+### 9.3 Thinking Insights API (✅ 구현 완료)
+
+```
+# Entity-Note Graph (노트 연결성 시각화)
+GET    /vault/entity-note-graph?vault_id={id}&user_token={token}&min_connections=1
+       Response: {
+         nodes: [{id, label, title, group, path?}],
+         edges: [{from, to, label, title}]
+       }
+
+# Thinking Insights (Palantir Foundry 스타일 분석)
+GET    /vault/thinking-insights?vault_id={id}&user_token={token}
+       Response: {
+         focus_areas: [{name, mention_count, sample_notes[], description}],
+         bridge_concepts: [{name, connected_areas[], bridge_strength}],
+         isolated_areas: [{name, note_count, suggestion}],
+         exploration_suggestions: [{title, description, related_concepts[], action_type}],
+         time_trends: {...},        // 예정
+         health_score: {...}        // 예정
+       }
+```
+
+**응답 형식 예시**:
+```json
+{
+  "focus_areas": [
+    {
+      "name": "Machine Learning",
+      "mention_count": 45,
+      "sample_notes": ["ML-basics.md", "Neural-Networks.md"],
+      "description": "기계학습 관련 핵심 연구 영역"
+    }
+  ],
+  "bridge_concepts": [
+    {
+      "name": "Data Pipeline",
+      "connected_areas": ["Machine Learning", "Data Engineering"],
+      "bridge_strength": 8.5
+    }
+  ],
+  "isolated_areas": [
+    {
+      "name": "Quantum Computing",
+      "note_count": 3,
+      "suggestion": "Machine Learning 영역과 연결 가능성 탐색"
+    }
+  ],
+  "exploration_suggestions": [
+    {
+      "title": "AI Ethics와 ML 연결",
+      "description": "두 영역 간 공통점 탐구",
+      "related_concepts": ["AI Ethics", "Machine Learning"],
+      "action_type": "connect_areas"
+    }
+  ]
+}
+```
+
+### 9.4 클러스터 API 응답 형식
 
 ```json
 {
@@ -896,11 +1178,16 @@ INSIGHTS:
 
 ---
 
-**문서 버전**: 3.0
-**최종 검토**: 2025-12-02
+**문서 버전**: 4.0
+**최종 검토**: 2025-12-03
 **주요 변경**:
 - Graphiti + neo4j-graphrag 병용 아키텍처 추가
 - PKM 온톨로지 v1 (SKOS/FOAF/PROV-O 기반) 설계
 - 잊혀진 지식 리마인더 기능 추가
-- Phase 12-17 로드맵 정의
-**다음 리뷰**: Phase 12 완료 후
+- Phase 12-14 완료 (GraphRAG, SKOS, ToolsRetriever)
+- Phase 15: Thinking Insights & 2nd Brain 강화 추가
+  - Entity-Note Graph API
+  - Thinking Insights API (Focus Areas, Bridge Concepts, Exploration Suggestions)
+  - Time-based Trends & Knowledge Health Score (예정)
+  - UI 개선: 노트 직접 열기, Graph 뷰 토글, 캐싱, 액션 버튼
+**다음 리뷰**: Phase 15 완료 후

@@ -4,7 +4,7 @@
 > Obsidian 플러그인 구독 모델 - MVP 2주 스프린트
 
 **Last Updated**: 2025-12-03
-**Status**: Phase 11-14 완료 (MVP 코어), 베타 테스트 준비 중
+**Status**: Phase 15 완료 (MVP 100%), 베타 테스트 준비
 **핵심 기술**: Graphiti (저장/추출) + neo4j-graphrag (검색/질의) 병용 아키텍처
 
 ---
@@ -110,10 +110,12 @@ Claude 클러스터 요약 → vis-network 시각화
 | 12 | ✅ 완료 | GraphRAG 검색 강화 |
 | 13 | ✅ 완료 | SKOS 온톨로지 자동 생성 |
 | 14 | ✅ 완료 | ToolsRetriever 통합 |
-| 15-17 | 📋 예정 | Post-MVP (Multi-Vault, Collaborative, AI Agent) |
+| 15 | ✅ 완료 | Thinking Insights & 2nd Brain 강화 |
+| 16 | ✅ 완료 | PKM Core Ontology v2 (8 노드) |
+| 17-18 | 🔸 Optional | Research Pack / Solo Maker Pack (Deferred) |
 
-**기술 MVP 완성도**: 93%
-**제품 시장 적합성**: 재정의 완료, 베타 테스트 준비 중
+**기술 MVP 완성도**: 100%
+**제품 시장 적합성**: 재정의 완료, 베타 테스트 준비
 
 ---
 
@@ -244,15 +246,139 @@ Claude 클러스터 요약 → vis-network 시각화
 - [x] Fallback 메커니즘
 - [x] 통합 검색 API 확장 (mode: "agentic")
 
+### Phase 15: Thinking Insights & 2nd Brain 강화 ✅
+**완료일**: 2025-12-03 | [📖 상세 가이드](phases/phase-15-insights.md)
+
+#### 15.1 Thinking Insights API (Palantir Foundry 스타일)
+- [x] Entity-Note Graph API (`/vault/entity-note-graph`)
+- [x] Thinking Insights API (`/vault/thinking-insights`)
+  - [x] Focus Areas (집중 영역)
+  - [x] Bridge Concepts (연결 개념)
+  - [x] Isolated Areas (고립 영역)
+  - [x] Exploration Suggestions (탐구 제안)
+- [x] Time-based Trends (시간 기반 트렌드)
+  - [x] 최근 7일 vs 30일 토픽 비교
+  - [x] Emerging/Growing/Declining/Stable 분류
+- [x] Knowledge Health Score (지식 건강도)
+  - [x] 연결 밀도 (connection_density)
+  - [x] 고립 노트 비율 (isolation_ratio)
+  - [x] 종합 점수 (overall score)
+  - [x] 개선 추천 (recommendations)
+
+#### 15.2 2nd Brain UI 개선
+- [x] Insights 패널 기본 UI
+- [x] 노트 직접 열기 - Focus Areas 클릭 시 관련 노트 열기
+- [x] Entity-Note Graph 뷰 토글 - Clusters ↔ Note Links 전환
+- [x] Insights 데이터 캐싱 (TTL 5분)
+- [x] Exploration Suggestions 액션 버튼 - 연결 노트 자동 생성
+
 ---
 
 ## 향후 로드맵 (Post-MVP)
 
+### Phase 16: PKM Core Ontology v2 (8 노드 확장) ✅
+**완료일**: 2025-12-07
+
+#### 16.1 Core 노드 확장 ✅
+- [x] Goal 노드 추가 (최상위 목표, OKR의 O)
+- [x] Concept 노드 추가 (구체적 개념, Topic의 하위)
+- [x] Question 노드 추가 (연구 질문, 미해결 의문)
+- [x] Insight 노드 추가 (발견, 결론, 통찰)
+- [x] Resource 노드 추가 (외부 자료: 논문, 책, URL)
+
+#### 16.2 Neo4j 스키마 업데이트 ✅
+- [x] 8개 Core 타입 Unique Constraint 추가 (`neo4j.py`)
+- [x] PKM_TYPES 정의 (`hybrid_graphiti_service.py`)
+
+#### 16.3 LLM 추출 프롬프트 개선 ✅
+- [x] `hybrid_graphiti_service.py` PKM_TYPES 8개로 확장
+- [x] 8개 타입 분류 규칙 업데이트 (CLASSIFICATION_RULES)
+- [x] 우선순위 기반 분류 로직 구현
+
+#### 16.4 API 업데이트 ✅
+- [x] entity-note-graph API 8개 타입 CASE문
+- [x] thinking-insights API 8개 타입 CASE문
+- [x] 타입별 분포 API 8개 타입 지원
+- [x] 8개 타입 색상 정의 (type_colors)
+
+#### 16.5 폴더 기반 필터링 ✅
+- [x] folder_prefix 파라미터로 볼트 전체/폴더별 조회 지원
+- [x] 연구/비즈니스/크리에이티브 폴더별 컨텍스트 분리
+
+### 🎯 폴더 기반 Core 8 전략 (권장)
+
+> **결론**: Research Pack, Solo Maker Pack은 Core 8으로 충분히 표현 가능.
+> Obsidian 폴더 구조가 자연스러운 컨텍스트 분리 역할을 함.
+
+#### 폴더별 Core 8 적용 예시
+
+```
+Obsidian Vault/
+├── 1-Research/          → Core 8 (Question, Insight 중심)
+│   └── 연구질문 = Question, 가설 = Concept, 결과 = Insight
+├── 2-Business/          → Core 8 (Goal, Project, Task 중심)
+│   └── 사업목표 = Goal, 제품기능 = Topic, 피드백 = Insight
+├── 3-Creative/          → Core 8 (Topic, Concept 중심)
+│   └── 콘텐츠아이디어 = Concept, 채널 = Resource
+└── 4-Resources/         → Core 8 (Resource 중심)
+    └── 논문/책/URL = Resource
+```
+
+#### Core 8 → Research/Maker 개념 매핑
+
+| Research Pack 개념 | Core 8 표현 |
+|-------------------|-------------|
+| ResearchQuestion | Question |
+| Hypothesis | Concept (가설적 개념) |
+| Experiment | Project (실험 프로젝트) |
+| Result | Insight (실험 결과/발견) |
+| Paper | Resource (논문 자료) |
+
+| Solo Maker Pack 개념 | Core 8 표현 |
+|---------------------|-------------|
+| Idea | Concept (아이디어) |
+| Feature | Topic (기능 영역) |
+| Feedback | Insight (사용자 발견) |
+| Product | Project (제품 프로젝트) |
+| Channel | Resource (배포 채널) |
+
+---
+
+### Phase 17: Research Pack (🔸 Optional - Deferred)
+**상태**: Core 8으로 대부분 커버 가능, 사용자 피드백 기반 결정
+
+> ⚠️ **결정**: 베타 사용자 피드백에서 명확한 니즈가 있을 때만 구현
+
+#### 17.1 Research 노드 추가 (9개) - DEFERRED
+- [ ] ResearchQuestion, Hypothesis, Experiment
+- [ ] Dataset, Variable, Method
+- [ ] Instrument, Result, Paper
+
+#### 17.2 대안: folder_prefix 기반 연구 모드
+- [x] 기존 folder_prefix 파라미터로 연구 폴더 필터링
+- [ ] UI에서 "Research Mode" 토글 (연구 폴더만 표시)
+
+### Phase 18: Solo Maker Pack (🔸 Optional - Deferred)
+**상태**: Core 8으로 대부분 커버 가능, 사용자 피드백 기반 결정
+
+> ⚠️ **결정**: 베타 사용자 피드백에서 명확한 니즈가 있을 때만 구현
+
+#### 18.1 Maker 노드 추가 (8개) - DEFERRED
+- [ ] Idea, Feature, ContentItem, Channel
+- [ ] Metric, Feedback, Audience, Product
+
+#### 18.2 대안: folder_prefix 기반 메이커 모드
+- [x] 기존 folder_prefix 파라미터로 비즈니스 폴더 필터링
+- [ ] UI에서 "Maker Mode" 토글 (비즈니스 폴더만 표시)
+
+### Phase 19+: 추가 확장
+
 | Phase | 기능 | 목표 |
 |-------|------|------|
-| **15** | Multi-Vault 지원 | 여러 Vault 간 지식 연결 |
-| **16** | Collaborative KG | 팀 지식 그래프 공유 |
-| **17** | AI Agent 통합 | 자율 리서치 에이전트 |
+| **19** | PROV-O Activity | 아이디어 계보 추적 |
+| **20** | Multi-Vault 지원 | 여러 Vault 간 지식 연결 |
+| **21** | Collaborative KG | 팀 지식 그래프 공유 |
+| **22** | AI Agent 통합 | 자율 리서치 에이전트 |
 
 ---
 
