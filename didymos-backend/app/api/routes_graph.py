@@ -952,35 +952,713 @@ async def cleanup_orphan_entities(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/vault/entity-clusters/{cluster_id}")
-async def get_entity_cluster_detail(
-    cluster_id: str,
+@router.get("/debug/entity-relations")
+async def debug_entity_relations(
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    디버그용: Entity 간 관계 타입 확인
+    """
+    try:
+        # 모든 Entity 간 관계 타입 조회
+        cypher = """
+        MATCH (e1:Entity)-[r]->(e2:Entity)
+        RETURN type(r) as rel_type, count(*) as count
+        ORDER BY count DESC
+        LIMIT 20
+        """
+        results = client.query(cypher, {})
+
+        # 샘플 관계 조회
+        cypher_sample = """
+        MATCH (e1:Entity)-[r]->(e2:Entity)
+        RETURN e1.name as from_name, type(r) as rel_type, e2.name as to_name,
+               r.fact as fact
+        LIMIT 10
+        """
+        samples = client.query(cypher_sample, {})
+
+        return {
+            "status": "success",
+            "relation_types": [{"type": r["rel_type"], "count": r["count"]} for r in results or []],
+            "samples": [
+                {
+                    "from": r["from_name"],
+                    "type": r["rel_type"],
+                    "to": r["to_name"],
+                    "fact": r.get("fact", "")
+                }
+                for r in samples or []
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Debug error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class EntityClusterDetailRequest(BaseModel):
+    """클러스터 상세 조회 요청"""
+    cluster_name: str
+    entity_uuids: List[str]
+
+
+@router.post("/vault/entity-clusters/detail")
+async def get_entity_cluster_detail_by_uuids(
+    request: EntityClusterDetailRequest,
     vault_id: str = Query(..., description="Vault ID"),
     user_token: str = Query(..., description="User token"),
     client: Neo4jBoltClient = Depends(get_neo4j_client)
 ) -> Dict[str, Any]:
     """
-    특정 클러스터의 상세 정보
+    클러스터 엔티티 목록으로 상세 정보 조회
 
-    클러스터 내 모든 엔티티와 내부 연결 관계를 반환합니다.
-    클러스터를 펼쳐서 상세 그래프를 보여줄 때 사용합니다.
+    프론트엔드에서 저장한 entity_uuids를 직접 전달받아 상세 정보를 반환합니다.
+    클러스터링 결과의 일관성을 보장합니다.
     """
     try:
-        # 먼저 전체 클러스터 계산 (캐싱 필요)
-        clusters_data = compute_entity_clusters_hybrid(client=client)
+        uuids = request.entity_uuids
+        cluster_name = request.cluster_name
 
-        detail = get_cluster_detail(client, cluster_id, clusters_data)
+        if not uuids:
+            raise HTTPException(status_code=400, detail="entity_uuids is required")
 
-        if not detail:
-            raise HTTPException(status_code=404, detail=f"Cluster {cluster_id} not found")
+        # 엔티티 상세 정보 조회
+        cypher = """
+        MATCH (e:Entity)
+        WHERE e.uuid IN $uuids
+        OPTIONAL MATCH (e)-[r:RELATES_TO]-(other:Entity)
+        WHERE other.uuid IN $uuids
+        RETURN e.uuid as uuid,
+               e.name as name,
+               e.summary as summary,
+               e.pkm_type as pkm_type,
+               count(r) as internal_connections
+        ORDER BY internal_connections DESC
+        """
+
+        results = client.query(cypher, {"uuids": uuids})
+
+        entities = []
+        type_distribution = {}
+        for row in results or []:
+            pkm_type = row.get("pkm_type", "Topic")
+            entities.append({
+                "uuid": row["uuid"],
+                "name": row["name"],
+                "summary": row.get("summary", ""),
+                "pkm_type": pkm_type,
+                "connections": row.get("internal_connections", 0)
+            })
+            type_distribution[pkm_type] = type_distribution.get(pkm_type, 0) + 1
+
+        # 내부 관계들 (모든 Entity 간 관계)
+        # Graphiti는 다양한 관계 타입을 생성할 수 있음 (RELATES_TO, BROADER, NARROWER 등)
+        cypher_edges = """
+        MATCH (e1:Entity)-[r]->(e2:Entity)
+        WHERE e1.uuid IN $uuids AND e2.uuid IN $uuids
+        RETURN e1.uuid as from_uuid, e2.uuid as to_uuid,
+               type(r) as rel_type,
+               r.fact as fact,
+               COALESCE(r.weight, 1.0) as weight
+        """
+
+        edge_results = client.query(cypher_edges, {"uuids": uuids})
+
+        edges = []
+        for row in edge_results or []:
+            edges.append({
+                "from": row["from_uuid"],
+                "to": row["to_uuid"],
+                "type": row.get("rel_type", "RELATES_TO"),
+                "fact": row.get("fact", ""),
+                "weight": row.get("weight", 1.0)
+            })
+
+        # 관련 노트 조회 (엔티티들이 MENTIONS된 노트들)
+        cypher_notes = """
+        MATCH (n:Note)-[:MENTIONS]->(e:Entity)
+        WHERE e.uuid IN $uuids
+        RETURN n.note_id as note_id,
+               n.title as title,
+               n.path as path,
+               collect(DISTINCT e.uuid) as entity_uuids,
+               collect(DISTINCT e.name) as entity_names
+        ORDER BY size(entity_uuids) DESC
+        LIMIT 50
+        """
+
+        note_results = client.query(cypher_notes, {"uuids": uuids})
+
+        related_notes = []
+        for row in note_results or []:
+            related_notes.append({
+                "note_id": row["note_id"],
+                "title": row.get("title", row["note_id"]),
+                "path": row.get("path", ""),
+                "entity_uuids": row.get("entity_uuids", []),
+                "entity_names": row.get("entity_names", []),
+                "entity_count": len(row.get("entity_uuids", []))
+            })
 
         return {
             "status": "success",
-            "cluster": detail
+            "cluster": {
+                "name": cluster_name,
+                "entity_count": len(entities),
+                "entity_uuids": uuids,
+                "type_distribution": type_distribution,
+                "entities": entities,
+                "internal_edges": edges,
+                "related_notes": related_notes
+            }
         }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Cluster detail error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vault/entity-note-graph")
+async def get_entity_note_graph(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    folder_prefix: str = Query(None, description="폴더 경로 필터"),
+    limit: int = Query(100, description="최대 엔티티 수", ge=10, le=500),
+    min_note_connections: int = Query(2, description="최소 노트 연결 수 (2 = 2개 이상 노트에서 언급된 엔티티만)", ge=1),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    Entity-Note 연결 그래프 (2nd Brain 시각화용)
+
+    Entity를 통해 Note 간 연결을 보여줍니다:
+    - Entity가 2개 이상의 Note에서 MENTIONS되면, 그 Note들은 "연결된" 것
+    - Entity 노드 + Note 노드를 함께 시각화
+    - Note 간 실제 연결성 파악 가능
+
+    **응답 예시:**
+    ```json
+    {
+      "entities": [
+        {"id": "uuid", "name": "PKM", "type": "Topic", "connected_notes": ["note1.md", "note2.md"]}
+      ],
+      "notes": [
+        {"id": "note1.md", "title": "Note 1", "connected_entities": ["uuid1", "uuid2"]}
+      ],
+      "entity_note_edges": [
+        {"entity_id": "uuid", "note_id": "note1.md"}
+      ],
+      "note_note_edges": [
+        {"from": "note1.md", "to": "note2.md", "shared_entities": ["uuid1"], "strength": 3}
+      ]
+    }
+    ```
+    """
+    try:
+        # 폴더 필터 조건
+        folder_condition = "n.note_id STARTS WITH $folder_prefix AND" if folder_prefix else ""
+
+        # Step 1: 여러 노트에서 언급된 엔티티들 조회
+        cypher_entities = f"""
+        MATCH (n:Note)-[:MENTIONS]->(e:Entity)
+        WHERE {folder_condition} e.name IS NOT NULL
+        WITH e, collect(DISTINCT n.note_id) as note_ids, count(DISTINCT n) as note_count
+        WHERE note_count >= $min_note_connections
+        RETURN e.uuid as uuid,
+               e.name as name,
+               e.summary as summary,
+               CASE
+                   WHEN e:Goal THEN 'Goal'
+                   WHEN e:Project THEN 'Project'
+                   WHEN e:Task THEN 'Task'
+                   WHEN e:Concept THEN 'Concept'
+                   WHEN e:Question THEN 'Question'
+                   WHEN e:Insight THEN 'Insight'
+                   WHEN e:Resource THEN 'Resource'
+                   WHEN e:Person THEN 'Person'
+                   ELSE 'Topic'
+               END as type,
+               note_ids,
+               note_count
+        ORDER BY note_count DESC
+        LIMIT $limit
+        """
+
+        params = {
+            "folder_prefix": folder_prefix or "",
+            "min_note_connections": min_note_connections,
+            "limit": limit
+        }
+
+        entities_result = client.query(cypher_entities, params)
+
+        if not entities_result:
+            return {
+                "status": "success",
+                "entity_count": 0,
+                "note_count": 0,
+                "entities": [],
+                "notes": [],
+                "entity_note_edges": [],
+                "note_note_edges": [],
+                "insights": {}
+            }
+
+        # Entity 데이터 구성
+        entities = []
+        all_note_ids = set()
+        entity_note_edges = []
+
+        # PKM Core Ontology v2 - 8개 타입 + Person 색상
+        type_colors = {
+            "Goal": "#9b59b6",      # 보라색 - 최상위 목표
+            "Project": "#2ecc71",   # 초록색 - 프로젝트
+            "Task": "#e74c3c",      # 빨간색 - 태스크
+            "Topic": "#3498db",     # 파란색 - 주제
+            "Concept": "#1abc9c",   # 청록색 - 개념
+            "Question": "#f39c12",  # 주황색 - 질문
+            "Insight": "#e91e63",   # 분홍색 - 인사이트
+            "Resource": "#607d8b",  # 회색 - 자료
+            "Person": "#e67e22",    # 오렌지색 - 인물 (하위호환)
+        }
+
+        for row in entities_result:
+            entity = {
+                "id": row["uuid"],
+                "name": row["name"] or "Unknown",
+                "summary": row.get("summary", ""),
+                "type": row["type"],
+                "color": type_colors.get(row["type"], "#95a5a6"),
+                "connected_notes": row["note_ids"],
+                "note_count": row["note_count"]
+            }
+            entities.append(entity)
+
+            # Entity-Note 엣지 추가
+            for note_id in row["note_ids"]:
+                all_note_ids.add(note_id)
+                entity_note_edges.append({
+                    "entity_id": row["uuid"],
+                    "note_id": note_id
+                })
+
+        # Step 2: Note 데이터 조회
+        notes = []
+        if all_note_ids:
+            cypher_notes = """
+            MATCH (n:Note)
+            WHERE n.note_id IN $note_ids
+            RETURN n.note_id as note_id,
+                   n.title as title,
+                   n.path as path
+            """
+            notes_result = client.query(cypher_notes, {"note_ids": list(all_note_ids)})
+
+            for row in notes_result or []:
+                notes.append({
+                    "id": row["note_id"],
+                    "title": row.get("title") or row["note_id"].split("/")[-1].replace(".md", ""),
+                    "path": row.get("path", row["note_id"])
+                })
+
+        # Step 3: Note-Note 연결 계산 (공유 Entity 기반)
+        note_note_edges = []
+        note_shared_entities = {}  # {(note1, note2): [entity_ids]}
+
+        for entity in entities:
+            note_list = entity["connected_notes"]
+            if len(note_list) >= 2:
+                # 모든 노트 쌍에 대해 공유 Entity 기록
+                for i in range(len(note_list)):
+                    for j in range(i + 1, len(note_list)):
+                        pair = tuple(sorted([note_list[i], note_list[j]]))
+                        if pair not in note_shared_entities:
+                            note_shared_entities[pair] = []
+                        note_shared_entities[pair].append(entity["id"])
+
+        for (note1, note2), shared_entities in note_shared_entities.items():
+            note_note_edges.append({
+                "from": note1,
+                "to": note2,
+                "shared_entities": shared_entities,
+                "strength": len(shared_entities)
+            })
+
+        # 연결 강도순 정렬
+        note_note_edges.sort(key=lambda x: x["strength"], reverse=True)
+
+        return {
+            "status": "success",
+            "entity_count": len(entities),
+            "note_count": len(notes),
+            "edge_count": len(note_note_edges),
+            "entities": entities,
+            "notes": notes,
+            "entity_note_edges": entity_note_edges,
+            "note_note_edges": note_note_edges[:200]  # 상위 200개 연결만
+        }
+
+    except Exception as e:
+        logger.error(f"Entity-Note graph error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vault/thinking-insights")
+async def get_thinking_insights(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    folder_prefix: str = Query(None, description="폴더 경로 필터"),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    사고 패턴 인사이트 (Palantir Foundry 스타일)
+
+    노트와 엔티티 분석을 통해:
+    1. **집중 영역**: 가장 많이 언급되는 주제들
+    2. **브릿지 개념**: 여러 영역을 연결하는 핵심 엔티티
+    3. **고립된 영역**: 다른 것과 연결이 적은 주제들
+    4. **성장 영역**: 최근 활발하게 확장되는 주제들
+    5. **탐구 제안**: 연결을 강화할 수 있는 영역
+
+    **응답 예시:**
+    ```json
+    {
+      "focus_areas": [
+        {"name": "Knowledge Graph", "strength": 15, "trend": "growing"}
+      ],
+      "bridge_concepts": [
+        {"name": "PKM", "connects": ["Research", "Development", "Writing"], "importance": 0.9}
+      ],
+      "isolated_areas": [
+        {"name": "Old Project", "connection_count": 1, "suggestion": "연결할 주제 검토"}
+      ],
+      "growth_areas": [
+        {"name": "AI", "recent_notes": 5, "growth_rate": 2.5}
+      ],
+      "exploration_suggestions": [
+        {"area1": "PKM", "area2": "AI", "potential": "높음", "reason": "공통 관심사 발견"}
+      ]
+    }
+    ```
+    """
+    try:
+        folder_condition = "n.note_id STARTS WITH $folder_prefix AND" if folder_prefix else ""
+        params = {"folder_prefix": folder_prefix or ""}
+
+        # 1. 집중 영역 (Focus Areas): 가장 많이 언급되는 엔티티
+        cypher_focus = f"""
+        MATCH (n:Note)-[:MENTIONS]->(e:Entity)
+        WHERE {folder_condition} e.name IS NOT NULL
+        WITH e, count(DISTINCT n) as mention_count, collect(DISTINCT n.note_id) as notes
+        WHERE mention_count >= 2
+        RETURN e.uuid as uuid,
+               e.name as name,
+               CASE WHEN e:Goal THEN 'Goal'
+                    WHEN e:Project THEN 'Project'
+                    WHEN e:Task THEN 'Task'
+                    WHEN e:Concept THEN 'Concept'
+                    WHEN e:Question THEN 'Question'
+                    WHEN e:Insight THEN 'Insight'
+                    WHEN e:Resource THEN 'Resource'
+                    WHEN e:Person THEN 'Person'
+                    ELSE 'Topic' END as type,
+               mention_count,
+               notes
+        ORDER BY mention_count DESC
+        LIMIT 15
+        """
+
+        focus_result = client.query(cypher_focus, params)
+        focus_areas = []
+        for row in focus_result or []:
+            focus_areas.append({
+                "uuid": row["uuid"],
+                "name": row["name"],
+                "type": row["type"],
+                "strength": row["mention_count"],
+                "notes": row["notes"][:5]  # 상위 5개 노트
+            })
+
+        # 2. 브릿지 개념 (Bridge Concepts): 여러 다른 엔티티들을 연결하는 허브
+        cypher_bridge = f"""
+        MATCH (n:Note)-[:MENTIONS]->(e1:Entity)
+        WHERE {folder_condition} e1.name IS NOT NULL
+        WITH n, e1
+        MATCH (n)-[:MENTIONS]->(e2:Entity)
+        WHERE e2.uuid <> e1.uuid AND e2.name IS NOT NULL
+        WITH e1, count(DISTINCT e2) as connected_entities, collect(DISTINCT e2.name)[..5] as connections
+        WHERE connected_entities >= 3
+        RETURN e1.uuid as uuid,
+               e1.name as name,
+               connected_entities,
+               connections
+        ORDER BY connected_entities DESC
+        LIMIT 10
+        """
+
+        bridge_result = client.query(cypher_bridge, params)
+        bridge_concepts = []
+        for row in bridge_result or []:
+            bridge_concepts.append({
+                "uuid": row["uuid"],
+                "name": row["name"],
+                "connected_count": row["connected_entities"],
+                "connects": row["connections"],
+                "importance": min(1.0, row["connected_entities"] / 10)
+            })
+
+        # 3. 고립된 영역 (Isolated Areas): 연결이 적은 엔티티
+        cypher_isolated = f"""
+        MATCH (n:Note)-[:MENTIONS]->(e:Entity)
+        WHERE {folder_condition} e.name IS NOT NULL
+        WITH e, count(DISTINCT n) as note_count
+        WHERE note_count = 1
+        OPTIONAL MATCH (e)-[r:RELATES_TO]-()
+        WITH e, note_count, count(r) as relation_count
+        WHERE relation_count <= 1
+        RETURN e.uuid as uuid,
+               e.name as name,
+               note_count,
+               relation_count
+        LIMIT 15
+        """
+
+        isolated_result = client.query(cypher_isolated, params)
+        isolated_areas = []
+        for row in isolated_result or []:
+            isolated_areas.append({
+                "uuid": row["uuid"],
+                "name": row["name"],
+                "note_count": row["note_count"],
+                "relation_count": row["relation_count"],
+                "suggestion": "다른 주제와 연결 검토"
+            })
+
+        # 4. 타입별 분포 (PKM Core Ontology v2 - 8개 타입 + Person)
+        cypher_distribution = f"""
+        MATCH (n:Note)-[:MENTIONS]->(e:Entity)
+        WHERE {folder_condition} e.name IS NOT NULL
+        WITH CASE WHEN e:Goal THEN 'Goal'
+                  WHEN e:Project THEN 'Project'
+                  WHEN e:Task THEN 'Task'
+                  WHEN e:Concept THEN 'Concept'
+                  WHEN e:Question THEN 'Question'
+                  WHEN e:Insight THEN 'Insight'
+                  WHEN e:Resource THEN 'Resource'
+                  WHEN e:Person THEN 'Person'
+                  ELSE 'Topic' END as type,
+             count(DISTINCT e) as entity_count,
+             count(DISTINCT n) as note_count
+        RETURN type, entity_count, note_count
+        ORDER BY entity_count DESC
+        """
+
+        dist_result = client.query(cypher_distribution, params)
+        type_distribution = {}
+        for row in dist_result or []:
+            type_distribution[row["type"]] = {
+                "entity_count": row["entity_count"],
+                "note_count": row["note_count"]
+            }
+
+        # 5. 탐구 제안: 연결이 약하지만 잠재적 연결 가능성이 있는 영역
+        exploration_suggestions = []
+        if len(focus_areas) >= 2:
+            # 상위 집중 영역 중 직접 연결이 없는 쌍 찾기
+            top_entities = [f["uuid"] for f in focus_areas[:8]]
+
+            cypher_unconnected = """
+            MATCH (e1:Entity), (e2:Entity)
+            WHERE e1.uuid IN $uuids AND e2.uuid IN $uuids
+              AND e1.uuid < e2.uuid
+              AND NOT (e1)-[:RELATES_TO]-(e2)
+            RETURN e1.name as name1, e2.name as name2
+            LIMIT 5
+            """
+
+            unconnected = client.query(cypher_unconnected, {"uuids": top_entities})
+            for row in unconnected or []:
+                exploration_suggestions.append({
+                    "area1": row["name1"],
+                    "area2": row["name2"],
+                    "potential": "높음",
+                    "reason": "둘 다 집중 영역이지만 직접 연결 없음"
+                })
+
+        # 6. 시간 기반 트렌드 (Time-based Trends)
+        # 최근 7일 vs 30일 토픽 비교
+        cypher_time_trends = f"""
+        MATCH (n:Note)-[:MENTIONS]->(e:Entity)
+        WHERE {folder_condition} e.name IS NOT NULL AND n.updated_at IS NOT NULL
+        WITH e,
+             sum(CASE WHEN n.updated_at >= datetime() - duration('P7D') THEN 1 ELSE 0 END) as recent_7d,
+             sum(CASE WHEN n.updated_at >= datetime() - duration('P30D') AND n.updated_at < datetime() - duration('P7D') THEN 1 ELSE 0 END) as older_30d,
+             count(DISTINCT n) as total_mentions
+        WHERE total_mentions >= 2
+        RETURN e.name as name,
+               e.uuid as uuid,
+               recent_7d,
+               older_30d,
+               total_mentions,
+               CASE
+                   WHEN recent_7d > 0 AND older_30d = 0 THEN 'emerging'
+                   WHEN recent_7d > older_30d THEN 'growing'
+                   WHEN recent_7d < older_30d THEN 'declining'
+                   ELSE 'stable'
+               END as trend
+        ORDER BY recent_7d DESC
+        LIMIT 20
+        """
+
+        trends_result = client.query(cypher_time_trends, params)
+
+        time_trends = {
+            "recent_topics": [],      # 최근 7일 활발
+            "emerging_topics": [],    # 새로 등장 (7일 내 신규)
+            "declining_topics": [],   # 감소 추세
+            "stable_topics": [],      # 안정적
+            "trend_period": "7d vs 30d"
+        }
+
+        for row in trends_result or []:
+            topic_info = {
+                "name": row["name"],
+                "uuid": row["uuid"],
+                "recent_count": row["recent_7d"],
+                "older_count": row["older_30d"],
+                "total": row["total_mentions"]
+            }
+
+            if row["trend"] == "emerging":
+                time_trends["emerging_topics"].append(topic_info)
+            elif row["trend"] == "growing":
+                time_trends["recent_topics"].append(topic_info)
+            elif row["trend"] == "declining":
+                time_trends["declining_topics"].append(topic_info)
+            else:
+                time_trends["stable_topics"].append(topic_info)
+
+        # 상위 5개씩만 유지
+        time_trends["recent_topics"] = time_trends["recent_topics"][:5]
+        time_trends["emerging_topics"] = time_trends["emerging_topics"][:5]
+        time_trends["declining_topics"] = time_trends["declining_topics"][:5]
+        time_trends["stable_topics"] = time_trends["stable_topics"][:5]
+
+        # 7. Knowledge Health Score (지식 건강도)
+        # 연결 밀도, 고립 비율, 완성도 계산
+
+        # 7-1. 전체 노트 수와 연결된 노트 수
+        cypher_health_notes = f"""
+        MATCH (n:Note)
+        WHERE {folder_condition.replace('AND', '') if folder_condition else '1=1'}
+        WITH count(n) as total_notes
+        OPTIONAL MATCH (n2:Note)-[:MENTIONS]->(:Entity)
+        WHERE {folder_condition.replace('AND', '') if folder_condition else '1=1'}
+        WITH total_notes, count(DISTINCT n2) as connected_notes
+        RETURN total_notes, connected_notes
+        """
+        # Simplified query for health metrics
+        cypher_health_simple = f"""
+        MATCH (n:Note)
+        {"WHERE " + folder_condition.replace('AND', '').strip() if folder_condition else ""}
+        WITH count(n) as total_notes
+        MATCH (n2:Note)-[:MENTIONS]->(:Entity)
+        {"WHERE " + folder_condition.replace('AND', '').strip() if folder_condition else ""}
+        WITH total_notes, count(DISTINCT n2) as connected_notes
+        RETURN total_notes, connected_notes
+        """
+
+        health_result = client.query(cypher_health_simple, params)
+        total_notes_count = 0
+        connected_notes_count = 0
+
+        if health_result and len(health_result) > 0:
+            total_notes_count = health_result[0].get("total_notes", 0) or 0
+            connected_notes_count = health_result[0].get("connected_notes", 0) or 0
+
+        # 7-2. 고립 노트 수 (엔티티 연결 없음)
+        isolation_ratio = 0.0
+        if total_notes_count > 0:
+            isolation_ratio = 1 - (connected_notes_count / total_notes_count)
+
+        # 7-3. 연결 밀도 (평균 엔티티 연결 수)
+        cypher_density = f"""
+        MATCH (n:Note)-[m:MENTIONS]->(:Entity)
+        {"WHERE " + folder_condition.replace('AND', '').strip() if folder_condition else ""}
+        WITH n, count(m) as entity_count
+        RETURN avg(entity_count) as avg_connections, max(entity_count) as max_connections
+        """
+
+        density_result = client.query(cypher_density, params)
+        avg_connections = 0.0
+        max_connections = 0
+
+        if density_result and len(density_result) > 0:
+            avg_connections = density_result[0].get("avg_connections", 0) or 0
+            max_connections = density_result[0].get("max_connections", 0) or 0
+
+        # 연결 밀도 점수 (0~1, 평균 5개 연결 기준)
+        connection_density = min(1.0, avg_connections / 5) if avg_connections else 0
+
+        # 완성도 점수 계산 (연결 밀도와 고립 비율 기반)
+        completeness_score = (connection_density * 0.6) + ((1 - isolation_ratio) * 0.4)
+
+        # 전체 건강도 점수 (0~100)
+        overall_health = int(completeness_score * 100)
+
+        # 개선 권장사항 생성
+        health_recommendations = []
+        if isolation_ratio > 0.3:
+            isolated_count = int(total_notes_count * isolation_ratio)
+            health_recommendations.append(f"고립 노트 {isolated_count}개를 다른 주제와 연결하세요")
+        if connection_density < 0.5:
+            health_recommendations.append("노트에 더 많은 개념/토픽을 추가하세요")
+        if len(isolated_areas) > 10:
+            health_recommendations.append(f"고립된 영역 {len(isolated_areas)}개를 검토하세요")
+        if len(focus_areas) < 3:
+            health_recommendations.append("집중 영역이 부족합니다. 더 많은 노트를 작성하세요")
+
+        if not health_recommendations:
+            health_recommendations.append("지식 그래프가 잘 관리되고 있습니다!")
+
+        health_score = {
+            "overall": overall_health,
+            "connection_density": round(connection_density, 2),
+            "isolation_ratio": round(isolation_ratio, 2),
+            "completeness_score": round(completeness_score, 2),
+            "metrics": {
+                "total_notes": total_notes_count,
+                "connected_notes": connected_notes_count,
+                "avg_connections": round(avg_connections, 1),
+                "max_connections": max_connections
+            },
+            "recommendations": health_recommendations
+        }
+
+        # 전체 통계
+        total_entities = sum(t["entity_count"] for t in type_distribution.values())
+        total_notes = max(t["note_count"] for t in type_distribution.values()) if type_distribution else 0
+
+        return {
+            "status": "success",
+            "summary": {
+                "total_entities": total_entities,
+                "total_notes": total_notes,
+                "focus_count": len(focus_areas),
+                "bridge_count": len(bridge_concepts),
+                "isolated_count": len(isolated_areas),
+                "health_score": overall_health
+            },
+            "type_distribution": type_distribution,
+            "focus_areas": focus_areas,
+            "bridge_concepts": bridge_concepts,
+            "isolated_areas": isolated_areas,
+            "exploration_suggestions": exploration_suggestions,
+            "time_trends": time_trends,
+            "health_score": health_score
+        }
+
+    except Exception as e:
+        logger.error(f"Thinking insights error: {e}")
         raise HTTPException(status_code=500, detail=str(e))

@@ -53,7 +53,7 @@ def get_entities_with_embeddings(
     min_connections: int = 1
 ) -> List[Dict[str, Any]]:
     """
-    name_embedding이 있는 Entity 노드들 가져오기
+    Entity 노드들 가져오기 (embedding 옵션)
 
     Args:
         client: Neo4j 클라이언트
@@ -66,9 +66,10 @@ def get_entities_with_embeddings(
     """
     if folder_prefix:
         # 폴더 필터가 있으면 해당 폴더 노트가 MENTIONS하는 엔티티만 조회
+        # embedding 없어도 가져옴 (그래프 클러스터링 가능)
         cypher = """
         MATCH (n:Note)-[:MENTIONS]->(e:Entity)
-        WHERE n.note_id STARTS WITH $folder_prefix AND e.name_embedding IS NOT NULL
+        WHERE n.note_id STARTS WITH $folder_prefix
         WITH e, count(DISTINCT n) as mention_count
         WHERE mention_count >= $min_connections
         RETURN e.uuid as uuid,
@@ -87,9 +88,9 @@ def get_entities_with_embeddings(
         })
     else:
         # 폴더 필터 없으면 전체 엔티티 조회 (min_connections 필터 적용)
+        # embedding 없어도 가져옴 (그래프 클러스터링 가능)
         cypher = """
         MATCH (n:Note)-[:MENTIONS]->(e:Entity)
-        WHERE e.name_embedding IS NOT NULL
         WITH e, count(DISTINCT n) as mention_count
         WHERE mention_count >= $min_connections
         RETURN e.uuid as uuid,
@@ -215,17 +216,30 @@ def cluster_by_embedding_hdbscan(
         {entity_uuid: cluster_id} (노이즈는 -1)
     """
     if not HDBSCAN_AVAILABLE:
-        # Fallback: pkm_type으로 클러스터링
-        type_to_cluster = {"Topic": 0, "Project": 1, "Task": 2, "Person": 3}
+        # Fallback: pkm_type으로 클러스터링 (8 Core Types + Person)
+        type_to_cluster = {
+            "Goal": 0, "Project": 1, "Task": 2, "Topic": 3,
+            "Concept": 4, "Question": 5, "Insight": 6, "Resource": 7,
+            "Person": 8
+        }
         return {
-            e["uuid"]: type_to_cluster.get(e.get("pkm_type", "Topic"), 0)
+            e["uuid"]: type_to_cluster.get(e.get("pkm_type", "Topic"), 3)
             for e in entities
         }
 
     # 임베딩 추출
     valid_entities = [e for e in entities if e.get("embedding")]
     if len(valid_entities) < min_cluster_size:
-        return {e["uuid"]: 0 for e in entities}
+        # embedding 없으면 pkm_type fallback 사용
+        type_to_cluster = {
+            "Goal": 0, "Project": 1, "Task": 2, "Topic": 3,
+            "Concept": 4, "Question": 5, "Insight": 6, "Resource": 7,
+            "Person": 8
+        }
+        return {
+            e["uuid"]: type_to_cluster.get(e.get("pkm_type", "Topic"), 3)
+            for e in entities
+        }
 
     embeddings = np.array([e["embedding"] for e in valid_entities], dtype=float)
 
