@@ -225,13 +225,55 @@ def cluster_by_graph_louvain(
         return {uuid: i for i, uuid in enumerate(entity_uuids)}
 
 
+def cluster_by_pkm_type(
+    entities: List[Dict[str, Any]]
+) -> Dict[str, int]:
+    """
+    PKM Core 8 Type 기반 클러스터링
+
+    생산성 극대화를 위해 명확한 8개 카테고리로 분류:
+    - Goal: 장기 목표
+    - Project: 진행 중인 프로젝트
+    - Task: 실행 가능한 할일
+    - Topic: 주제/분야
+    - Concept: 개념/아이디어
+    - Question: 탐구할 질문
+    - Insight: 통찰/발견
+    - Resource: 참고 자료
+    - Person: 사람 (추가)
+
+    Args:
+        entities: 엔티티 리스트
+
+    Returns:
+        {entity_uuid: cluster_id}
+    """
+    # PKM Core 8 Types + Person
+    type_to_cluster = {
+        "Goal": 0,
+        "Project": 1,
+        "Task": 2,
+        "Topic": 3,
+        "Concept": 4,
+        "Question": 5,
+        "Insight": 6,
+        "Resource": 7,
+        "Person": 8
+    }
+
+    return {
+        e["uuid"]: type_to_cluster.get(e.get("pkm_type", "Topic"), 3)
+        for e in entities
+    }
+
+
 def cluster_by_embedding_hdbscan(
     entities: List[Dict[str, Any]],
     min_cluster_size: int = 5,
     min_samples: int = 2
 ) -> Dict[str, int]:
     """
-    name_embedding 기반 HDBSCAN 클러스터링
+    name_embedding 기반 HDBSCAN 클러스터링 (레거시 - pkm_type 기반으로 대체됨)
 
     Args:
         entities: embedding이 포함된 엔티티 리스트
@@ -403,16 +445,19 @@ def compute_entity_clusters_hybrid(
     min_connections: int = 1
 ) -> Dict[str, Any]:
     """
-    Entity 노드들을 하이브리드 방식으로 클러스터링
+    Entity 노드들을 PKM Core 8 Type 기반으로 클러스터링
 
-    1. name_embedding으로 시멘틱 클러스터링
-    2. RELATES_TO로 그래프 클러스터링
-    3. 두 결과 병합
+    생산성 극대화를 위해 HDBSCAN 대신 PKM 8 Type 사용:
+    - Goal, Project, Task: 실행 가능한 액션 흐름
+    - Topic, Concept, Insight: 지식 관리
+    - Question: 탐구 영역
+    - Resource: 참고 자료
+    - Person: 인맥 관리
 
     Args:
         client: Neo4j 클라이언트
-        min_cluster_size: 최소 클러스터 크기
-        resolution: Louvain 해상도
+        min_cluster_size: 최소 클러스터 크기 (pkm_type에서는 미사용)
+        resolution: Louvain 해상도 (pkm_type에서는 미사용)
         folder_prefix: 폴더 경로 필터 (예: '1_프로젝트/'). 해당 폴더의 노트가 MENTIONS하는 엔티티만 클러스터링
         min_connections: 최소 연결 노트 수 (기본 1). 단일 노트 연결도 포함 (의미론적으로 중요할 수 있음)
 
@@ -425,7 +470,20 @@ def compute_entity_clusters_hybrid(
         }
     """
     folder_info = f" for folder '{folder_prefix}'" if folder_prefix else ""
-    logger.info(f"Starting hybrid entity clustering{folder_info} (min_connections={min_connections})...")
+    logger.info(f"Starting PKM Type entity clustering{folder_info} (min_connections={min_connections})...")
+
+    # PKM Core 8 Types + Person 정의
+    PKM_TYPES = {
+        0: {"id": "Goal", "name": "🎯 Goal", "description": "장기 목표"},
+        1: {"id": "Project", "name": "📁 Project", "description": "진행 중인 프로젝트"},
+        2: {"id": "Task", "name": "✅ Task", "description": "실행 가능한 할일"},
+        3: {"id": "Topic", "name": "📚 Topic", "description": "주제/분야"},
+        4: {"id": "Concept", "name": "💡 Concept", "description": "개념/아이디어"},
+        5: {"id": "Question", "name": "❓ Question", "description": "탐구할 질문"},
+        6: {"id": "Insight", "name": "✨ Insight", "description": "통찰/발견"},
+        7: {"id": "Resource", "name": "📎 Resource", "description": "참고 자료"},
+        8: {"id": "Person", "name": "👤 Person", "description": "사람"}
+    }
 
     try:
         # Step 1: Entity 데이터 가져오기 (min_connections 필터 적용)
@@ -442,80 +500,71 @@ def compute_entity_clusters_hybrid(
                 "clusters": [],
                 "edges": [],
                 "total_entities": 0,
-                "method": "hybrid",
+                "method": "pkm_type",
                 "computed_at": datetime.utcnow().isoformat()
             }
 
-        logger.info(f"Found {len(entities)} entities with embeddings")
+        logger.info(f"Found {len(entities)} entities")
 
         entity_uuids = [e["uuid"] for e in entities]
         uuid_to_entity = {e["uuid"]: e for e in entities}
 
-        # Step 2: RELATES_TO 엣지 가져오기
+        # Step 2: RELATES_TO 엣지 가져오기 (클러스터 간 연결용)
         relates_to_edges = get_relates_to_edges(client, entity_uuids)
         logger.info(f"Found {len(relates_to_edges)} RELATES_TO edges")
 
-        # Step 3: 그래프 기반 클러스터링
-        graph_clusters = cluster_by_graph_louvain(entity_uuids, relates_to_edges, resolution)
-        n_graph_clusters = len(set(graph_clusters.values()))
-        logger.info(f"Graph clustering: {n_graph_clusters} clusters")
+        # Step 3: PKM Type 기반 클러스터링 (HDBSCAN 대체)
+        pkm_clusters = cluster_by_pkm_type(entities)
+        n_pkm_types = len(set(pkm_clusters.values()))
+        logger.info(f"PKM Type clustering: {n_pkm_types} types found")
 
-        # Step 4: 임베딩 기반 클러스터링
-        embedding_clusters = cluster_by_embedding_hdbscan(entities, min_cluster_size)
-        n_emb_clusters = len(set(c for c in embedding_clusters.values() if c >= 0))
-        logger.info(f"Embedding clustering: {n_emb_clusters} clusters (+noise)")
-
-        # Step 5: 클러스터 병합
-        final_clusters = merge_cluster_assignments(graph_clusters, embedding_clusters)
-        n_final_clusters = len(set(final_clusters.values()))
-        logger.info(f"Merged: {n_final_clusters} final clusters")
-
-        # Step 6: 클러스터 데이터 구성
+        # Step 4: 클러스터 데이터 구성
         cluster_groups = defaultdict(list)
-        for uuid, cluster_id in final_clusters.items():
+        for uuid, cluster_id in pkm_clusters.items():
             cluster_groups[cluster_id].append(uuid)
 
-        # 클러스터 정보 생성
+        # 클러스터 정보 생성 (PKM Type별)
         clusters = []
         for cluster_id, uuids in sorted(cluster_groups.items()):
-            if len(uuids) < 2:
-                continue  # 너무 작은 클러스터 스킵
+            if len(uuids) == 0:
+                continue  # 빈 클러스터 스킵
 
-            # 대표 엔티티 찾기
-            rep_uuid, rep_name = find_cluster_representative(entities, uuids)
+            # PKM Type 정보
+            type_info = PKM_TYPES.get(cluster_id, {"id": "Topic", "name": "📚 Topic", "description": "주제"})
 
             # 클러스터 내 엔티티들
             cluster_entities = [uuid_to_entity[u] for u in uuids if u in uuid_to_entity]
 
-            # PKM 타입 분포
-            type_counts = defaultdict(int)
-            for e in cluster_entities:
-                type_counts[e.get("pkm_type", "Topic")] += 1
+            # mention_count 기준 정렬 (상위 엔티티가 대표)
+            cluster_entities.sort(key=lambda e: e.get("mention_count", 0), reverse=True)
 
-            # 샘플 엔티티 이름
+            # 샘플 엔티티 이름 (상위 10개)
             sample_names = [e["name"] for e in cluster_entities[:10]]
 
             # 내부 연결 수 (RELATES_TO)
+            uuid_set = set(uuids)
             internal_edges = sum(
                 1 for f, t, _ in relates_to_edges
-                if f in uuids and t in uuids
+                if f in uuid_set and t in uuid_set
             )
 
             clusters.append({
-                "id": f"cluster_{cluster_id}",
-                "name": rep_name,
-                "representative_uuid": rep_uuid,
+                "id": f"cluster_{type_info['id'].lower()}",
+                "name": type_info["name"],
+                "pkm_type": type_info["id"],
+                "description": type_info["description"],
                 "entity_count": len(uuids),
                 "entity_uuids": uuids,
                 "sample_entities": sample_names,
-                "type_distribution": dict(type_counts),
+                "type_distribution": {type_info["id"]: len(uuids)},
                 "internal_edges": internal_edges,
                 "cohesion_score": internal_edges / max(len(uuids), 1),
                 "computed_at": datetime.utcnow().isoformat()
             })
 
-        # 크기순 정렬
-        clusters.sort(key=lambda c: c["entity_count"], reverse=True)
+        # 생산성 흐름 순서로 정렬: Goal → Project → Task → Topic → Concept → Question → Insight → Resource → Person
+        type_order = {"Goal": 0, "Project": 1, "Task": 2, "Topic": 3, "Concept": 4, "Question": 5, "Insight": 6, "Resource": 7, "Person": 8}
+        clusters.sort(key=lambda c: type_order.get(c.get("pkm_type", "Topic"), 99))
 
         # 클러스터 간 엣지 계산 (공유 RELATES_TO)
         cluster_edges = _compute_cluster_edges(clusters, relates_to_edges)
@@ -525,14 +574,13 @@ def compute_entity_clusters_hybrid(
             "edges": cluster_edges,
             "total_entities": len(entities),
             "clustered_entities": sum(c["entity_count"] for c in clusters),
-            "method": "hybrid_graph_embedding",
-            "graph_clusters": n_graph_clusters,
-            "embedding_clusters": n_emb_clusters,
+            "method": "pkm_type",
+            "pkm_types_found": n_pkm_types,
             "computed_at": datetime.utcnow().isoformat()
         }
 
     except Exception as e:
-        logger.error(f"Hybrid entity clustering failed: {e}")
+        logger.error(f"PKM Type entity clustering failed: {e}")
         raise
 
 
