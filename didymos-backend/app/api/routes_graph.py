@@ -1716,6 +1716,115 @@ async def get_thinking_insights(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/vault/reclassify-pkm-types")
+async def reclassify_pkm_types(
+    vault_id: str = Query(..., description="Vault ID"),
+    user_token: str = Query(..., description="User token"),
+    batch_size: int = Query(500, description="Batch size", ge=50, le=1000),
+    client: Neo4jBoltClient = Depends(get_neo4j_client)
+) -> Dict[str, Any]:
+    """
+    기존 Entity의 PKM Type 재분류 (Resync 필요 없음!)
+
+    개선된 분류 로직을 기존 모든 Entity에 적용합니다.
+    - Goal, Concept, Question, Insight, Resource 분류 개선
+    - Summary 기반 키워드 매칭 강화
+    - 이름 패턴 분석 추가
+
+    **사용 시나리오:**
+    - 분류 로직 업데이트 후 기존 데이터 재분류
+    - 빈 타입(Goal=0, Concept=0 등) 채우기
+    """
+    try:
+        from app.services.hybrid_graphiti_service import classify_entity_to_pkm_type
+
+        # Step 1: 모든 Entity 조회
+        cypher_all_entities = """
+        MATCH (e:Entity)
+        WHERE e.name IS NOT NULL
+        RETURN e.uuid as uuid, e.name as name, e.summary as summary, e.pkm_type as current_type
+        LIMIT $batch_size
+        """
+
+        entities = client.query(cypher_all_entities, {"batch_size": batch_size})
+
+        if not entities:
+            return {
+                "status": "success",
+                "message": "No entities to reclassify",
+                "reclassified": 0
+            }
+
+        logger.info(f"Reclassifying {len(entities)} entities...")
+
+        # Step 2: 재분류 및 업데이트
+        stats = {
+            "Goal": 0, "Project": 0, "Task": 0, "Topic": 0,
+            "Concept": 0, "Question": 0, "Insight": 0, "Resource": 0,
+            "Person": 0, "changed": 0, "unchanged": 0, "errors": 0
+        }
+
+        for entity in entities:
+            try:
+                uuid = entity["uuid"]
+                name = entity["name"]
+                summary = entity.get("summary", "")
+                current_type = entity.get("current_type", "Topic")
+
+                # 새 분류
+                new_type = classify_entity_to_pkm_type(name, summary)
+
+                # 통계 업데이트
+                stats[new_type] = stats.get(new_type, 0) + 1
+
+                if new_type != current_type:
+                    stats["changed"] += 1
+
+                    # 기존 PKM 레이블 제거하고 새 레이블 추가
+                    cypher_update = f"""
+                    MATCH (e:Entity {{uuid: $uuid}})
+                    REMOVE e:Goal, e:Project, e:Task, e:Topic, e:Concept, e:Question, e:Insight, e:Resource, e:Person
+                    SET e:{new_type}
+                    SET e.pkm_type = $pkm_type
+                    SET e.pkm_reclassified_at = datetime()
+                    RETURN e.name as name
+                    """
+
+                    client.query(cypher_update, {"uuid": uuid, "pkm_type": new_type})
+                else:
+                    stats["unchanged"] += 1
+
+            except Exception as e:
+                logger.error(f"Error reclassifying {entity.get('name')}: {e}")
+                stats["errors"] += 1
+
+        logger.info(f"✅ Reclassification complete: {stats}")
+
+        return {
+            "status": "success",
+            "message": f"Reclassified {len(entities)} entities",
+            "total_processed": len(entities),
+            "changed": stats["changed"],
+            "unchanged": stats["unchanged"],
+            "errors": stats["errors"],
+            "type_distribution": {
+                "Goal": stats["Goal"],
+                "Project": stats["Project"],
+                "Task": stats["Task"],
+                "Topic": stats["Topic"],
+                "Concept": stats["Concept"],
+                "Question": stats["Question"],
+                "Insight": stats["Insight"],
+                "Resource": stats["Resource"],
+                "Person": stats["Person"]
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Reclassification error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/vault/migrate-note-mentions")
 async def migrate_note_mentions(
     vault_id: str = Query(..., description="Vault ID"),

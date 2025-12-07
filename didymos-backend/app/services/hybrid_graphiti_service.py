@@ -136,6 +136,12 @@ def classify_entity_to_pkm_type(entity_name: str, entity_summary: str = None) ->
     """
     엔티티 이름/요약을 기반으로 PKM 타입 분류 (Core Ontology v2)
 
+    분류 전략:
+    1. 이름 기반 규칙 (가장 확실한 경우)
+    2. 요약 기반 의미 분석 (Graphiti가 생성한 요약 활용)
+    3. 이름 패턴 분석 (대문자, 특수 형식 등)
+    4. 기본값: Topic
+
     Args:
         entity_name: 엔티티 이름
         entity_summary: Graphiti가 생성한 엔티티 요약
@@ -145,7 +151,7 @@ def classify_entity_to_pkm_type(entity_name: str, entity_summary: str = None) ->
     """
     name_lower = entity_name.lower()
 
-    # 규칙 기반 분류 (우선순위 순서대로 체크)
+    # Step 1: 이름 기반 규칙 (우선순위 순서대로 체크)
     # 순서: Goal > Question > Insight > Resource > Task > Project > Concept > Person > Topic
     priority_order = ["Goal", "Question", "Insight", "Resource", "Task", "Project", "Concept", "Person"]
 
@@ -158,41 +164,101 @@ def classify_entity_to_pkm_type(entity_name: str, entity_summary: str = None) ->
                 except Exception:
                     continue
 
-    # 요약에서 힌트 찾기 (8개 타입)
+    # Step 2: 요약 기반 의미 분석 (확장된 키워드)
     if entity_summary:
         summary_lower = entity_summary.lower()
 
-        # Goal 패턴
-        if any(kw in summary_lower for kw in ["목표", "goal", "objective", "vision", "장기 계획"]):
+        # Goal 패턴 - 장기 목표, 비전, 방향
+        goal_keywords = [
+            "목표", "goal", "objective", "vision", "장기 계획", "미션", "mission",
+            "달성하고자", "이루고자", "위해", "지향", "추구", "지향점", "방향성",
+            "궁극적", "최종", "비전", "전략적 목표", "okr"
+        ]
+        if any(kw in summary_lower for kw in goal_keywords):
             return "Goal"
 
-        # Question 패턴
-        if any(kw in summary_lower for kw in ["질문", "question", "의문", "연구 문제", "탐구"]):
+        # Question 패턴 - 질문, 의문, 탐구할 것
+        question_keywords = [
+            "질문", "question", "의문", "연구 문제", "탐구", "알아보",
+            "궁금", "조사", "research question", "rq", "어떻게", "왜",
+            "무엇인지", "확인 필요", "검토 필요", "파악 필요", "알아야"
+        ]
+        if any(kw in summary_lower for kw in question_keywords):
             return "Question"
 
-        # Insight 패턴
-        if any(kw in summary_lower for kw in ["발견", "insight", "결론", "깨달음", "배움", "통찰"]):
+        # Insight 패턴 - 발견, 깨달음, 결론
+        insight_keywords = [
+            "발견", "insight", "결론", "깨달음", "배움", "통찰", "이해",
+            "알게 됨", "파악됨", "확인됨", "깨닫", "인사이트", "교훈",
+            "핵심", "중요한 점", "시사점", "함의", "의미하는", "learned"
+        ]
+        if any(kw in summary_lower for kw in insight_keywords):
             return "Insight"
 
-        # Resource 패턴
-        if any(kw in summary_lower for kw in ["논문", "paper", "책", "book", "참고 자료", "출처", "링크"]):
+        # Resource 패턴 - 외부 자료, 참고 문헌
+        resource_keywords = [
+            "논문", "paper", "책", "book", "참고 자료", "출처", "링크",
+            "article", "reference", "문헌", "자료", "source", "문서",
+            "저널", "journal", "arxiv", "doi", "isbn", "url", "웹사이트",
+            "블로그", "강의", "lecture", "course", "tutorial", "가이드"
+        ]
+        if any(kw in summary_lower for kw in resource_keywords):
             return "Resource"
 
-        # Task 패턴
-        if any(kw in summary_lower for kw in ["해야 할", "완료해야", "task", "todo", "작업", "실행"]):
+        # Task 패턴 - 실행 가능한 할일
+        task_keywords = [
+            "해야 할", "완료해야", "task", "todo", "작업", "실행",
+            "처리", "수행", "진행해야", "체크", "확인해야", "작성해야",
+            "구현해야", "수정해야", "추가해야", "삭제해야", "변경해야",
+            "action item", "next step", "할 일"
+        ]
+        if any(kw in summary_lower for kw in task_keywords):
             return "Task"
 
-        # Project 패턴
-        if any(kw in summary_lower for kw in ["프로젝트", "project", "개발 중", "구현", "진행 중"]):
+        # Project 패턴 - 중간 단위 프로젝트
+        project_keywords = [
+            "프로젝트", "project", "개발 중", "구현", "진행 중", "계획",
+            "시스템", "플랫폼", "서비스", "앱", "애플리케이션", "모듈",
+            "컴포넌트", "feature", "기능 개발", "스프린트", "마일스톤",
+            "phase", "단계", "initiative", "워크스트림"
+        ]
+        if any(kw in summary_lower for kw in project_keywords):
             return "Project"
 
-        # Concept 패턴 (기술 용어, 방법론)
-        if any(kw in summary_lower for kw in ["개념", "concept", "방법", "method", "기법", "알고리즘", "기술"]):
+        # Concept 패턴 - 기술 개념, 방법론, 알고리즘
+        concept_keywords = [
+            "개념", "concept", "방법", "method", "기법", "알고리즘",
+            "기술", "아키텍처", "architecture", "패턴", "pattern",
+            "프레임워크", "framework", "프로토콜", "protocol", "모델",
+            "이론", "theory", "원리", "principle", "법칙", "정의",
+            "용어", "terminology", "접근법", "approach", "전략",
+            "테크닉", "technique", "메서드", "스키마", "구조"
+        ]
+        if any(kw in summary_lower for kw in concept_keywords):
             return "Concept"
 
         # Person 패턴 (하위 호환성)
-        if any(kw in summary_lower for kw in ["사람", "person", "연구원", "학생", "팀원", "저자"]):
+        person_keywords = [
+            "사람", "person", "연구원", "학생", "팀원", "저자",
+            "동료", "교수", "박사", "researcher", "author", "colleague",
+            "개발자", "developer", "엔지니어", "engineer", "디자이너"
+        ]
+        if any(kw in summary_lower for kw in person_keywords):
             return "Person"
+
+    # Step 3: 이름 패턴 분석 (규칙에서 못 잡은 케이스)
+
+    # 대문자 약어는 Concept 가능성 높음 (API, SDK, LLM, GPT 등)
+    if entity_name.isupper() and len(entity_name) <= 6:
+        return "Concept"
+
+    # CamelCase 기술 용어는 Concept (GraphQL, TypeScript 등)
+    if len(entity_name) > 3 and entity_name[0].isupper() and any(c.isupper() for c in entity_name[1:]) and not entity_name.isupper():
+        return "Concept"
+
+    # "-ing" 또는 "-tion" 으로 끝나는 영어 단어는 Concept 가능성
+    if entity_name.endswith(("ing", "tion", "ment", "ness", "ity")):
+        return "Concept"
 
     # 기본값: Topic (주제 카테고리)
     return "Topic"
