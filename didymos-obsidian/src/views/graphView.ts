@@ -125,40 +125,24 @@ export class DidymosGraphView extends ItemView {
       }
     });
 
-    // 🔄 Force Re-Sync 버튼 (캐시 무시하고 전체 재동기화)
+    // 🔴 Reset & Resync 버튼 (엔티티 삭제 + 전체 재동기화)
     const resetBtn = controls.createEl("button", {
-      text: "🔄 Force Re-Sync",
+      text: "🔴 Reset & Resync",
       cls: "didymos-sync-btn didymos-reset-btn"
     });
-    resetBtn.style.backgroundColor = "#6c757d";
+    resetBtn.style.backgroundColor = "#dc3545";
     resetBtn.style.color = "white";
 
     resetBtn.addEventListener("click", async () => {
-      const targetFolder = this.selectedFolders.length > 0
-        ? this.selectedFolders[0]
-        : "전체 Vault";
-
       const confirmed = confirm(
-        `⚠️ "${targetFolder}"의 모든 노트를 강제로 다시 동기화합니다.\n\n` +
-        "이전 sync 시간을 무시하고 모든 노트를 다시 처리합니다.\n" +
-        "(엔티티 추출 + 임베딩 생성)\n\n" +
-        "계속하시겠습니까?"
+        "⚠️ 모든 엔티티를 삭제하고 전체 노트를 다시 동기화합니다.\n\n" +
+        "1. 기존 엔티티/관계 전부 삭제\n" +
+        "2. 모든 노트에서 엔티티 재추출\n\n" +
+        "시간이 오래 걸릴 수 있습니다. 계속하시겠습니까?"
       );
       if (!confirmed) return;
 
-      // lastBulkSyncTime 리셋
-      this.settings.lastBulkSyncTime = 0;
-      await (this.plugin as any).saveSettings();
-
-      // 선택된 폴더가 있으면 폴더 sync, 없으면 전체 sync
-      if (this.selectedFolders.length > 0) {
-        await this.syncFolderNotes(resetBtn, this.selectedFolders[0]);
-      } else {
-        const syncBtn = this.containerEl.querySelector(".didymos-sync-btn:not(.didymos-reset-btn)") as HTMLElement;
-        if (syncBtn) {
-          await this.syncAllNotes(syncBtn);
-        }
-      }
+      await this.resetAndResync(resetBtn);
     });
 
     // 💡 잊혀진 지식 버튼
@@ -541,40 +525,51 @@ export class DidymosGraphView extends ItemView {
   }
 
   /**
-   * 🔴 엔티티 완전 초기화 (MVP 개발용)
+   * 🔴 Reset & Resync: 엔티티 삭제 + 전체 재동기화
    */
-  async resetEntities(button: HTMLElement) {
+  async resetAndResync(button: HTMLElement) {
     const originalText = button.textContent || "";
 
     try {
-      button.textContent = "🔴 Resetting...";
+      // Step 1: 엔티티 삭제
+      button.textContent = "🔴 1/2 Deleting entities...";
       button.setAttribute("disabled", "true");
 
       const result = await this.api.resetVaultEntities(this.settings.vaultId);
+      console.log(`✅ Reset: ${result.deleted_entities} entities deleted`);
 
-      button.textContent = `✅ Reset: ${result.deleted_entities} entities deleted`;
-
-      // lastBulkSyncTime을 0으로 리셋하여 다음 Sync All에서 모든 노트 재처리
+      // lastBulkSyncTime 리셋
       this.settings.lastBulkSyncTime = 0;
       await (this.plugin as any).saveSettings();
 
+      // Step 2: 전체 재동기화
+      button.textContent = "🔄 2/2 Syncing all notes...";
+
+      // Sync All 버튼 찾기
+      const syncBtn = this.containerEl.querySelector(".didymos-sync-btn:not(.didymos-reset-btn)") as HTMLElement;
+      if (syncBtn) {
+        await this.syncAllNotes(syncBtn);
+      }
+
+      button.textContent = "✅ Reset & Resync complete";
+      button.removeAttribute("disabled");
+
       setTimeout(() => {
         button.textContent = originalText;
-        button.removeAttribute("disabled");
       }, 3000);
 
-      // 2nd Brain 모드면 그래프 다시 렌더링
+      // 그래프 다시 렌더링
       if (this.viewMode === "entity-clusters") {
         await this.renderEntityClustersGraph();
       }
 
     } catch (error: any) {
-      button.textContent = `❌ Reset failed`;
-      console.error("Reset error:", error);
+      button.textContent = `❌ Reset & Resync failed`;
+      console.error("Reset & Resync error:", error);
+      button.removeAttribute("disabled");
 
       setTimeout(() => {
         button.textContent = originalText;
-        button.removeAttribute("disabled");
       }, 3000);
     }
   }
