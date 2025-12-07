@@ -1680,16 +1680,18 @@ async def migrate_note_mentions(
     이 엔드포인트는 기존 Episodic-Entity 관계를 Note-Entity 관계로 변환합니다.
     """
     try:
-        from app.services.hybrid_graphiti_service import migrate_episodic_to_note_mentions
+        from app.services.hybrid_graphiti_service import create_mentions_from_episodes, add_pkm_labels_to_graphiti_entities
 
-        result = migrate_episodic_to_note_mentions(
-            vault_id=vault_id,
-            batch_size=batch_size
-        )
+        # Step 1: PKM 레이블 추가
+        label_result = await add_pkm_labels_to_graphiti_entities(vault_id, batch_size)
+
+        # Step 2: Note-Entity MENTIONS 관계 생성
+        mentions_result = await create_mentions_from_episodes(vault_id, batch_size)
 
         return {
             "status": "success",
-            "migration_result": result
+            "pkm_labels": label_result,
+            "mentions": mentions_result
         }
 
     except Exception as e:
