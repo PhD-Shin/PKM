@@ -195,6 +195,7 @@ export interface EntityClusterEdge {
   to: string;
   weight: number;
   relation_type: string;
+  label?: string;
 }
 
 export interface EntityClusterData {

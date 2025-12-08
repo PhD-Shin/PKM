@@ -995,7 +995,10 @@ export class DidymosGraphView extends ItemView {
         },
         smooth: { enabled: true, type: 'continuous', roundness: 0.3 } as any,
         title: `${edge.weight} shared connections`,
-        label: '',
+        // Filter out 'INTER_CLUSTER' or 'inter_cluster' labels
+        label: (edge.label && edge.label.toLowerCase() !== 'inter_cluster') ? edge.label :
+          (edge.relation_type && edge.relation_type.toLowerCase() !== 'inter_cluster' ? edge.relation_type : ''),
+        font: { align: 'middle', background: 'white', size: 10, strokeWidth: 0 },
         arrows: {}
       }));
 
@@ -1051,10 +1054,10 @@ export class DidymosGraphView extends ItemView {
         enabled: true,
         solver: 'forceAtlas2Based',
         forceAtlas2Based: {
-          gravitationalConstant: -80,
-          centralGravity: 0.01,
-          springLength: 150,
-          springConstant: 0.05,
+          gravitationalConstant: -2500, // Stronger repulsion for better spacing
+          centralGravity: 0.005,      // Weaker central gravity to allow spreading
+          springLength: 250,          // Longer springs
+          springConstant: 0.04,
           damping: 0.4
         },
         stabilization: {
@@ -1208,7 +1211,7 @@ export class DidymosGraphView extends ItemView {
       const relTypeStyles: Record<string, { color: string; dashes: boolean; arrows: string; label: string }> = {
         BROADER: { color: '#9b59b6', dashes: false, arrows: 'to', label: 'broader' },
         NARROWER: { color: '#1abc9c', dashes: false, arrows: 'to', label: 'narrower' },
-        RELATES_TO: { color: '#cccccc', dashes: false, arrows: '', label: '' }
+        RELATES_TO: { color: '#cccccc', dashes: false, arrows: '', label: 'related' }
       };
 
       // 내부 엣지를 vis-network 엣지로 변환
@@ -1219,7 +1222,8 @@ export class DidymosGraphView extends ItemView {
           id: `edge_${idx}`,
           from: edge.from,
           to: edge.to,
-          label: style.label,
+          // Show fact if available (truncated), otherwise type label
+          label: (edge.fact && edge.fact.length < 30) ? edge.fact : (edge.fact ? edge.fact.slice(0, 27) + "..." : style.label),
           arrows: style.arrows ? { to: { enabled: true, scaleFactor: 0.8 } } : {},
           color: {
             color: style.color,
@@ -1427,10 +1431,57 @@ export class DidymosGraphView extends ItemView {
         const nodeId = params.nodes[0];
         const node = graphData.nodes.find(n => n.id === nodeId);
         if (node && (node as any).entity_data) {
-          console.log("Entity clicked:", (node as any).entity_data);
+          this.showEntityDetails((node as any).entity_data);
         }
       }
     });
+  }
+
+  /**
+   * Entity 상세 정보 표시
+   */
+  private showEntityDetails(entityData: any) {
+    if (this.clusterDetailEl) {
+      this.clusterDetailEl.remove();
+    }
+
+    const container = this.containerEl.querySelector(".didymos-graph-container") as HTMLElement;
+    const detail = container.createEl("div", { cls: "didymos-cluster-detail" });
+    this.clusterDetailEl = detail;
+
+    // Header
+    const header = detail.createEl("div", { cls: "didymos-cluster-detail__header" });
+    header.createEl("h3", { text: `📄 ${entityData.name}` });
+    const closeBtn = header.createEl("button", { text: "Close" });
+    closeBtn.addEventListener("click", () => {
+      detail.remove();
+      this.clusterDetailEl = null;
+    });
+
+    const content = detail.createEl("div", { cls: "didymos-cluster-detail__content" });
+
+    // Summary
+    if (entityData.summary) {
+      content.createEl("div", { cls: "didymos-cluster-summary", text: entityData.summary });
+    }
+
+    // Metadata
+    const meta = content.createEl("div", { cls: "didymos-cluster-stats" });
+    meta.createEl("div", { cls: "stat-item" }).createSpan({ text: `Type: ${entityData.pkm_type || 'Topic'}` });
+    meta.createEl("div", { cls: "stat-item" }).createSpan({ text: `Mentions: ${entityData.mention_count || 0}` });
+
+    // Connected Notes (if available)
+    if (entityData.connected_notes && entityData.connected_notes.length > 0) {
+      content.createEl("h4", { text: "Connected Notes" });
+      const ul = content.createEl("ul");
+      entityData.connected_notes.slice(0, 10).forEach((path: string) => {
+        const li = ul.createEl("li");
+        li.createEl("a", { text: path.split("/").pop(), href: "#" }).addEventListener("click", async (e) => {
+          e.preventDefault();
+          await this.app.workspace.openLinkText(path, "", false);
+        });
+      });
+    }
   }
 
   /**
@@ -1660,8 +1711,8 @@ export class DidymosGraphView extends ItemView {
         this.fontPreset === "compact"
           ? { node: 12, edge: 9 }
           : this.fontPreset === "large"
-          ? { node: 16, edge: 12 }
-          : { node: 14, edge: 10 };
+            ? { node: 16, edge: 12 }
+            : { node: 14, edge: 10 };
 
       const baseOptions = {
         nodes: {
@@ -1692,23 +1743,23 @@ export class DidymosGraphView extends ItemView {
         },
         physics: this.layoutSpacing === "compact"
           ? {
-              enabled: true,
-              barnesHut: {
-                gravitationalConstant: -2500,
-                springLength: 100,
-                springConstant: 0.06,
-              },
-              stabilization: { iterations: 120 },
-            }
-          : {
-              enabled: true,
-              barnesHut: {
-                gravitationalConstant: -2000,
-                springLength: 150,
-                springConstant: 0.04,
-              },
-              stabilization: { iterations: 100 },
+            enabled: true,
+            barnesHut: {
+              gravitationalConstant: -2500,
+              springLength: 100,
+              springConstant: 0.06,
             },
+            stabilization: { iterations: 120 },
+          }
+          : {
+            enabled: true,
+            barnesHut: {
+              gravitationalConstant: -2000,
+              springLength: 150,
+              springConstant: 0.04,
+            },
+            stabilization: { iterations: 100 },
+          },
         interaction: {
           hover: true,
           tooltipDelay: 200,
@@ -1718,16 +1769,16 @@ export class DidymosGraphView extends ItemView {
       const layoutOptions =
         this.layoutPreset === "hierarchical"
           ? {
-              layout: {
-                hierarchical: {
-                  direction: "LR",
-                  sortMethod: "hubsize",
-                  levelSeparation: this.layoutSpacing === "compact" ? 80 : 120,
-                  nodeSpacing: this.layoutSpacing === "compact" ? 80 : 120,
-                },
+            layout: {
+              hierarchical: {
+                direction: "LR",
+                sortMethod: "hubsize",
+                levelSeparation: this.layoutSpacing === "compact" ? 80 : 120,
+                nodeSpacing: this.layoutSpacing === "compact" ? 80 : 120,
               },
-              physics: { enabled: false },
-            }
+            },
+            physics: { enabled: false },
+          }
           : {};
 
       // Clustering: group별 색상 정의
@@ -1853,8 +1904,8 @@ export class DidymosGraphView extends ItemView {
         this.fontPreset === "compact"
           ? { node: 12, edge: 9 }
           : this.fontPreset === "large"
-          ? { node: 16, edge: 12 }
-          : { node: 14, edge: 10 };
+            ? { node: 16, edge: 12 }
+            : { node: 14, edge: 10 };
 
       const baseOptions = {
         nodes: {
@@ -1885,23 +1936,23 @@ export class DidymosGraphView extends ItemView {
         },
         physics: this.layoutSpacing === "compact"
           ? {
-              enabled: true,
-              barnesHut: {
-                gravitationalConstant: -2500,
-                springLength: 100,
-                springConstant: 0.06,
-              },
-              stabilization: { iterations: 120 },
-            }
-          : {
-              enabled: true,
-              barnesHut: {
-                gravitationalConstant: -2000,
-                springLength: 150,
-                springConstant: 0.04,
-              },
-              stabilization: { iterations: 100 },
+            enabled: true,
+            barnesHut: {
+              gravitationalConstant: -2500,
+              springLength: 100,
+              springConstant: 0.06,
             },
+            stabilization: { iterations: 120 },
+          }
+          : {
+            enabled: true,
+            barnesHut: {
+              gravitationalConstant: -2000,
+              springLength: 150,
+              springConstant: 0.04,
+            },
+            stabilization: { iterations: 100 },
+          },
         interaction: {
           hover: true,
           tooltipDelay: 200,
@@ -1911,16 +1962,16 @@ export class DidymosGraphView extends ItemView {
       const layoutOptions =
         this.layoutPreset === "hierarchical"
           ? {
-              layout: {
-                hierarchical: {
-                  direction: "LR",
-                  sortMethod: "hubsize",
-                  levelSeparation: this.layoutSpacing === "compact" ? 80 : 120,
-                  nodeSpacing: this.layoutSpacing === "compact" ? 80 : 120,
-                },
+            layout: {
+              hierarchical: {
+                direction: "LR",
+                sortMethod: "hubsize",
+                levelSeparation: this.layoutSpacing === "compact" ? 80 : 120,
+                nodeSpacing: this.layoutSpacing === "compact" ? 80 : 120,
               },
-              physics: { enabled: false },
-            }
+            },
+            physics: { enabled: false },
+          }
           : {};
 
       this.network = new Network(graphContainer, filtered, {

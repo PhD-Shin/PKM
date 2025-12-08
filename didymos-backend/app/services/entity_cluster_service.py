@@ -812,15 +812,25 @@ def _compute_cluster_edges(
             edge_key = tuple(sorted([from_cluster, to_cluster]))
             cluster_edge_counts[edge_key] += 1
 
+    # 클러스터 ID -> PKM Type 매핑
+    cluster_types = {c["id"]: c.get("pkm_type", "Topic") for c in clusters}
+
     # 엣지 리스트 생성
     edges = []
     for (from_c, to_c), count in cluster_edge_counts.items():
         if count >= 1:  # 최소 1개 연결
+            # PKM Type 기반 관계 추론
+            from_type = cluster_types.get(from_c, "Topic")
+            to_type = cluster_types.get(to_c, "Topic")
+            
+            semantic_info = infer_semantic_edge_type(from_type, to_type)
+            
             edges.append({
                 "from": from_c,
                 "to": to_c,
                 "weight": count,
-                "relation_type": "INTER_CLUSTER"
+                "relation_type": semantic_info["edge_type"],  # e.g., "REQUIRES"
+                "label": semantic_info["edge_label"] or semantic_info["edge_type"] # e.g., "필요 태스크"
             })
 
     return edges

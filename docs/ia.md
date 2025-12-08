@@ -1,554 +1,517 @@
-# 🏗️ Didymos - Information Architecture
+# Didymos - 정보 아키텍처
 
-> 시스템의 정보 구조, 데이터 모델, API 명세
+> 시스템 데이터 모델, Neo4j 스키마, API 명세
+
+**최종 수정**: 2025-12-08
 
 ---
 
-## 1. 시스템 구조도
+## 1. 시스템 아키텍처
 
 ```
 ┌──────────────────────────────────────────┐
-│          Obsidian Client                  │
+│          Obsidian 클라이언트              │
 │  ┌────────────────────────────────────┐  │
-│  │      Didymos Plugin (TypeScript)      │  │
-│  │  - Context View                     │  │
-│  │  - Graph View                       │  │
-│  │  - Task View                        │  │
-│  │  - Settings                         │  │
+│  │      Didymos 플러그인 (TypeScript) │  │
+│  │  - Vault Graph View (8 클러스터)   │  │
+│  │  - Context View                    │  │
+│  │  - Thinking Insights               │  │
+│  │  - Settings                        │  │
 │  └────────────────────────────────────┘  │
 └──────────────┬───────────────────────────┘
                │ HTTPS/REST
 ┌──────────────▼───────────────────────────┐
-│          FastAPI Backend                  │
+│          FastAPI 백엔드                   │
 │  ┌────────────────────────────────────┐  │
 │  │  Routes                            │  │
-│  │  - /auth                           │  │
-│  │  - /notes                          │  │
-│  │  - /review                         │  │
-│  │  - /tasks                          │  │
+│  │  - /notes/sync                     │  │
+│  │  - /vault/entity-clusters          │  │
+│  │  - /vault/thinking-insights        │  │
+│  │  - /temporal/*                     │  │
 │  ├────────────────────────────────────┤  │
 │  │  Services                          │  │
-│  │  - ontology.py (LLM 추출)         │  │
-│  │  - llm_client.py (OpenAI)         │  │
-│  │  - graph_analyzer.py              │  │
+│  │  - hybrid_graphiti_service.py      │  │
+│  │  - entity_cluster_service.py       │  │
+│  │  - graphiti_service.py             │  │
+│  │  - ontology_service.py             │  │
 │  └────────────────────────────────────┘  │
 └──────────────┬───────────────────────────┘
-               │ Cypher
+               │ Bolt/Cypher
 ┌──────────────▼───────────────────────────┐
-│         Neo4j AuraDB                      │
-│  - User/Vault/Note 노드                   │
-│  - Topic/Project/Task/Person 노드          │
-│  - 관계: MENTIONS, RELATES_TO, etc.       │
+│         Neo4j AuraDB + Graphiti           │
+│  - Entity 노드 (8 PKM Types)              │
+│  - Episodic 노드 (Graphiti)               │
+│  - 이중 시간 엣지                          │
+│  - 벡터 임베딩                             │
 └───────────────────────────────────────────┘
 ```
 
 ---
 
-## 2. 데이터 모델 (Neo4j Graph Schema)
+## 2. 데이터 모델 (Neo4j 그래프 스키마)
 
-### 2.1 노드 타입 및 속성
+### 2.1 PKM Core 온톨로지 - 8가지 타입
 
-#### User
+모든 엔티티는 8가지 PKM 타입 중 정확히 하나로 분류됩니다:
+
+| 타입 | 설명 | 예시 |
+|------|------|------|
+| **Goal** | 최상위 목표 | "박사 졸업", "스타트업 런칭" |
+| **Project** | Goal 달성을 위한 중간 단위 | "3장 작성", "MVP 개발" |
+| **Task** | 실행 가능한 최소 단위 | "서론 작성", "API 구현" |
+| **Topic** | 주제/카테고리 | "머신러닝", "PKM" |
+| **Concept** | Topic 하위의 구체적 개념 | "Transformer", "Zettelkasten" |
+| **Question** | 연구 질문 / 미해결 이슈 | "RAG가 환각을 줄이나?" |
+| **Insight** | 발견 / 결론 | "HDBSCAN이 K-means보다 우수" |
+| **Resource** | 외부 참조 자료 | 논문, 책, URL |
+
+### 2.2 노드 타입
+
+#### Entity (핵심 PKM 노드)
 ```cypher
-(:User {
-  id: String,              // 고유 사용자 ID
-  email: String,           // 이메일
-  created_at: DateTime,    // 가입일
-  subscription: String     // "free" | "pro" | "power"
-})
-```
-
-#### Vault
-```cypher
-(:Vault {
-  id: String,              // Vault ID
-  name: String,            // Vault 이름
+(:Entity {
+  uuid: String,           // Graphiti 생성 UUID
+  name: String,           // 엔티티 이름
+  summary: String,        // LLM 생성 요약
+  pkm_type: String,       // 8가지 PKM 타입 중 하나
+  name_embedding: List<Float>,  // 벡터 임베딩
   created_at: DateTime,
-  last_synced: DateTime
+  labels: List<String>    // 추가 Graphiti 라벨
 })
 ```
 
 #### Note
 ```cypher
 (:Note {
-  note_id: String,         // 파일 경로 (unique)
-  title: String,           // 노트 제목
-  path: String,            // 파일 경로
-  content_hash: String,    // 내용 해시 (변경 감지)
-  tags: List<String>,      // 태그 목록
+  note_id: String,        // 파일 경로 (볼트당 유니크)
+  title: String,          // 노트 제목
+  path: String,           // 파일 경로
+  content_hash: String,   // 변경 감지용 콘텐츠 해시
+  tags: List<String>,     // Obsidian 태그
   created_at: DateTime,
-  updated_at: DateTime,
-  embedding: Vector        // (Optional) 벡터 임베딩
+  updated_at: DateTime
 })
 ```
 
-#### Topic
+#### Episodic (Graphiti)
 ```cypher
-(:Topic {
-  id: String,              // 자동 생성 ID
-  name: String,            // 토픽 이름
-  description: String,     // LLM 생성 설명
-  importance_score: Float, // 0.0~1.0
-  first_seen: DateTime,
-  last_mentioned: DateTime,
-  mention_count: Integer
+(:Episodic {
+  uuid: String,           // Graphiti episode UUID
+  name: String,           // Episode 이름
+  content: String,        // Episode 콘텐츠
+  source_description: String,
+  reference_time: DateTime,  // 지식이 유효했던 시점
+  created_at: DateTime
 })
 ```
 
-#### Project
+#### User & Vault
 ```cypher
-(:Project {
+(:User {
+  id: String,
+  email: String,
+  created_at: DateTime,
+  subscription: String    // "free" | "pro" | "research"
+})
+
+(:Vault {
   id: String,
   name: String,
-  status: String,          // "active" | "paused" | "done"
-  description: String,
   created_at: DateTime,
-  updated_at: DateTime,
-  deadline: DateTime       // (Optional)
-})
-```
-
-#### Task
-```cypher
-(:Task {
-  id: String,
-  title: String,
-  status: String,          // "todo" | "in_progress" | "done"
-  priority: String,        // "low" | "medium" | "high"
-  due_date: DateTime,      // (Optional)
-  created_at: DateTime,
-  completed_at: DateTime   // (Optional)
-})
-```
-
-#### Person
-```cypher
-(:Person {
-  id: String,
-  name: String,
-  role: String,            // "colleague" | "author" | etc.
-  first_mentioned: DateTime
+  last_synced: DateTime
 })
 ```
 
 ---
 
-### 2.2 관계 (Relationships)
+### 2.3 관계
 
-#### User ↔ Vault
+#### 핵심 Graphiti 관계
+
 ```cypher
-(:User)-[:OWNS {created_at: DateTime}]->(:Vault)
+// Entity 간 관계 (이중 시간)
+(e1:Entity)-[:RELATES_TO {
+  uuid: String,
+  fact: String,           // 관계 설명
+  valid_at: DateTime,     // 관계 시작 시점
+  invalid_at: DateTime,   // 관계 종료 시점 (null = 현재)
+  created_at: DateTime,   // 시스템 기록 시점
+  expired_at: DateTime    // 대체된 시점
+}]->(e2:Entity)
 ```
 
-#### Vault ↔ Note
-```cypher
-(:Vault)-[:HAS_NOTE {synced_at: DateTime}]->(:Note)
-```
+#### Note 관계
 
-#### Note ↔ Topic
 ```cypher
+// Note가 Entity 언급
 (:Note)-[:MENTIONS {
-  confidence: Float,       // 0.0~1.0 (LLM 추출 신뢰도)
-  extracted_at: DateTime
-}]->(:Topic)
-```
+  source: String,
+  valid_at: DateTime
+}]->(:Entity)
 
-#### Note ↔ Project
-```cypher
-(:Note)-[:RELATES_TO_PROJECT {
-  relevance: Float,
-  extracted_at: DateTime
-}]->(:Project)
-```
-
-#### Note ↔ Task
-```cypher
-(:Note)-[:CONTAINS_TASK {
-  line_number: Integer,    // 노트 내 위치
-  extracted_at: DateTime
-}]->(:Task)
-```
-
-#### Note ↔ Person
-```cypher
-(:Note)-[:MENTIONS_PERSON {
-  context: String,         // 언급 문맥
-  extracted_at: DateTime
-}]->(:Person)
-```
-
-#### Topic ↔ Topic
-```cypher
-(:Topic)-[:BROADER]->(:Topic)        // 상위 개념
-(:Topic)-[:NARROWER]->(:Topic)       // 하위 개념
-(:Topic)-[:RELATED {
-  strength: Float          // 연관 강도
-}]->(:Topic)
-```
-
-#### Project ↔ Task
-```cypher
-(:Project)-[:HAS_TASK {
-  order: Integer           // Task 순서
-}]->(:Task)
-```
-
-#### Project ↔ Topic
-```cypher
-(:Project)-[:HAS_TOPIC]->(:Topic)
-```
-
-#### Note ↔ Note (Internal Links)
-```cypher
+// 노트 간 내부 링크
 (:Note)-[:LINKS_TO {
-  link_text: String,       // 링크 텍스트
+  link_text: String,
   created_at: DateTime
 }]->(:Note)
+```
+
+#### Episode 관계
+
+```cypher
+(:Episodic)-[:MENTIONS]->(:Entity)
+(:Note)-[:HAS_EPISODE]->(:Episodic)
+```
+
+#### 소유 관계
+
+```cypher
+(:User)-[:OWNS]->(:Vault)
+(:Vault)-[:HAS_NOTE]->(:Note)
+```
+
+---
+
+### 2.4 시맨틱 엣지 타입 매트릭스
+
+PKM 타입 조합 기반으로 50+ 시맨틱 엣지 타입이 자동 추론됩니다:
+
+```python
+PKM_EDGE_TYPE_MATRIX = {
+    # Goal 관계
+    ("Goal", "Project"): ("ACHIEVED_BY", "달성 수단", "이 목표는 이 프로젝트로 달성"),
+    ("Goal", "Task"): ("REQUIRES", "필요 태스크", "목표에 직접 필요한 태스크"),
+    ("Goal", "Topic"): ("FOCUSES_ON", "집중 영역", "목표의 주제 영역"),
+    ("Goal", "Insight"): ("INFORMED_BY", "전략적 통찰", "목표에 영향을 주는 인사이트"),
+
+    # Project 관계
+    ("Project", "Task"): ("REQUIRES", "필요 작업", "프로젝트에 필요한 태스크"),
+    ("Project", "Topic"): ("INVOLVES", "관련 분야", "프로젝트 관련 주제"),
+    ("Project", "Concept"): ("USES", "사용 개념", "프로젝트에서 사용하는 개념"),
+    ("Project", "Insight"): ("PRODUCES", "도출 인사이트", "프로젝트에서 도출된 통찰"),
+    ("Project", "Resource"): ("REFERENCES", "참고 자료", "프로젝트에서 사용한 자료"),
+
+    # Question → Answer 사이클
+    ("Question", "Insight"): ("ANSWERED_BY", "답변", "질문에 대한 답변 인사이트"),
+    ("Question", "Resource"): ("RESEARCHED_IN", "연구 출처", "질문이 탐구된 자료"),
+    ("Question", "Topic"): ("ABOUT", "주제", "질문의 주제"),
+
+    # Insight 관계
+    ("Insight", "Resource"): ("DERIVED_FROM", "출처", "인사이트의 출처 자료"),
+    ("Insight", "Concept"): ("CLARIFIES", "명확화", "인사이트가 명확히 하는 개념"),
+    ("Insight", "Topic"): ("CONTRIBUTES_TO", "기여", "인사이트가 기여하는 주제"),
+
+    # Topic → Concept 계층
+    ("Topic", "Concept"): ("CONTAINS", "포함 개념", "주제에 포함된 개념"),
+    ("Topic", "Topic"): ("RELATED_TO", "관련 주제", "연관된 주제"),
+    ("Concept", "Concept"): ("RELATES_TO", "관련 개념", "연관된 개념"),
+
+    # Resource 관계
+    ("Resource", "Topic"): ("COVERS", "다루는 주제", "자료가 다루는 주제"),
+    ("Resource", "Concept"): ("EXPLAINS", "설명", "자료가 설명하는 개념"),
+
+    # Task 관계
+    ("Task", "Task"): ("BLOCKS", "의존성", "이 태스크가 다른 태스크를 블록"),
+    ("Task", "Resource"): ("NEEDS", "필요 자료", "태스크에 필요한 자료"),
+
+    # ... 총 50+ 조합
+}
 ```
 
 ---
 
 ## 3. API 명세
 
-### 3.1 인증 (Authentication)
+### 3.1 핵심 엔드포인트
 
-#### POST `/auth/register`
-**요청**
-```json
-{
-  "email": "user@example.com",
-  "password": "secure_password"
-}
-```
-**응답**
-```json
-{
-  "user_id": "user_123",
-  "token": "jwt_token_here"
-}
-```
+| 엔드포인트 | 메서드 | 설명 |
+|------------|--------|------|
+| `/health` | GET | 헬스 체크 |
+| `/notes/sync` | POST | 노트를 지식 그래프에 동기화 |
+| `/vault/entity-clusters` | GET | 8 PKM 클러스터 + 시맨틱 엣지 조회 |
+| `/vault/entity-clusters/detail` | GET | 모든 엣지가 포함된 상세 클러스터 |
+| `/vault/thinking-insights` | GET | 집중 영역, 브릿지 개념 |
+| `/temporal/insights/stale` | GET | 잊혀진 지식 (30일 이상) |
 
-#### POST `/auth/login`
-**요청**
-```json
-{
-  "email": "user@example.com",
-  "password": "secure_password"
-}
-```
-**응답**
-```json
-{
-  "token": "jwt_token_here",
-  "user_id": "user_123"
-}
-```
-
----
-
-### 3.2 노트 동기화
+### 3.2 Note 동기화 API
 
 #### POST `/notes/sync`
+
 **요청**
 ```json
 {
   "user_token": "jwt_token",
   "vault_id": "vault_001",
   "note": {
-    "note_id": "research/raman-scattering.md",
-    "title": "Raman Scattering",
-    "path": "research/raman-scattering.md",
-    "content": "# Raman Scattering\n...",
+    "note_id": "research/ml-clustering.md",
+    "title": "ML 클러스터링 방법론",
+    "path": "research/ml-clustering.md",
+    "content": "# ML 클러스터링 방법론\n...",
     "yaml": {
       "date": "2024-01-15",
-      "tags": ["physics", "spectroscopy"]
+      "tags": ["ml", "clustering"]
     },
-    "tags": ["physics", "spectroscopy"],
-    "links": ["research/heil-line.md"],
+    "tags": ["ml", "clustering"],
+    "links": ["research/hdbscan.md"],
     "created_at": "2024-01-15T10:00:00Z",
     "updated_at": "2024-01-15T15:30:00Z"
   }
 }
 ```
+
 **응답**
 ```json
 {
   "status": "ok",
-  "note_id": "research/raman-scattering.md",
+  "note_id": "research/ml-clustering.md",
   "entities_extracted": {
-    "topics": 3,
-    "projects": 1,
-    "tasks": 2
-  }
+    "nodes": 5,
+    "edges": 3
+  },
+  "graphiti_episode_id": "ep_abc123"
 }
 ```
 
----
+### 3.3 Entity Clusters API
 
-### 3.3 컨텍스트 조회
+#### GET `/vault/entity-clusters`
 
-#### GET `/notes/context/{note_id}`
-**쿼리 파라미터**
-- `user_token`: JWT 토큰
+**파라미터**
+- `vault_id` (필수): Vault 식별자
+- `user_token` (필수): 인증 토큰
+- `folder_prefix` (선택): 폴더 필터 (예: "1-Research/")
 
 **응답**
 ```json
 {
-  "topics": [
+  "clusters": [
     {
-      "id": "topic_123",
-      "name": "Raman scattering",
-      "importance_score": 0.85
-    }
-  ],
-  "projects": [
-    {
-      "id": "proj_456",
-      "name": "Symbiotic star monitoring",
-      "status": "active"
-    }
-  ],
-  "tasks": [
-    {
-      "id": "task_789",
-      "title": "Analyze RR Tel spectra",
-      "status": "todo",
-      "priority": "high"
-    }
-  ],
-  "related_notes": [
-    {
-      "note_id": "research/heil-line.md",
-      "title": "HeII Line Analysis",
-      "path": "research/heil-line.md",
-      "similarity": 0.78
-    }
-  ]
-}
-```
-
----
-
-### 3.4 그래프 데이터
-
-#### GET `/notes/graph/{note_id}`
-**쿼리 파라미터**
-- `user_token`: JWT 토큰
-- `hops`: 1 또는 2 (기본값: 1)
-
-**응답**
-```json
-{
-  "nodes": [
-    {
-      "id": "note_001",
-      "type": "Note",
-      "label": "Raman Scattering",
-      "properties": {"path": "research/raman.md"}
+      "id": "Goal",
+      "label": "Goal",
+      "color": "#E74C3C",
+      "entities": [
+        {
+          "uuid": "uuid-001",
+          "name": "박사 졸업",
+          "summary": "2025년 Q4까지 박사 논문 완료"
+        }
+      ],
+      "count": 5
     },
     {
-      "id": "topic_123",
-      "type": "Topic",
-      "label": "Raman scattering",
-      "properties": {"importance_score": 0.85}
+      "id": "Project",
+      "label": "Project",
+      "color": "#E67E22",
+      "entities": [...],
+      "count": 12
     }
+    // ... 총 8개 클러스터
   ],
   "edges": [
     {
-      "source": "note_001",
-      "target": "topic_123",
-      "type": "MENTIONS",
-      "properties": {"confidence": 0.92}
-    }
-  ]
-}
-```
-
----
-
-### 3.5 주간 리뷰
-
-#### GET `/review/weekly`
-**쿼리 파라미터**
-- `user_token`: JWT 토큰
-- `vault_id`: Vault ID
-
-**응답**
-```json
-{
-  "new_topics": [
-    {"name": "Quantum computing", "mention_count": 5}
-  ],
-  "forgotten_projects": [
-    {
-      "name": "ML Paper Review",
-      "last_updated": "2024-01-01",
-      "days_inactive": 14
+      "from": "uuid-001",
+      "from_name": "박사 졸업",
+      "from_type": "Goal",
+      "to": "uuid-002",
+      "to_name": "3장 작성",
+      "to_type": "Project",
+      "semantic_type": "ACHIEVED_BY",
+      "semantic_label": "달성 수단",
+      "semantic_description": "이 목표는 이 프로젝트로 달성"
     }
   ],
-  "pending_tasks": [
-    {
-      "title": "Finish literature review",
-      "priority": "high",
-      "overdue_by_days": 3
+  "semantic_edge_stats": {
+    "total": 605,
+    "unique_types": 15,
+    "type_distribution": {
+      "ACHIEVED_BY": 45,
+      "REQUIRES": 120,
+      "CONTAINS": 89
     }
-  ],
-  "most_active_notes": [
-    {
-      "title": "Daily Notes",
-      "update_count": 15
-    }
-  ]
-}
-```
-
----
-
-### 3.6 Task 관리
-
-#### PUT `/tasks/update`
-**요청**
-```json
-{
-  "user_token": "jwt_token",
-  "task_id": "task_789",
-  "updates": {
-    "status": "done",
-    "completed_at": "2024-01-20T14:00:00Z"
   }
 }
 ```
+
+### 3.4 Thinking Insights API
+
+#### GET `/vault/thinking-insights`
+
 **응답**
 ```json
 {
-  "status": "ok",
-  "task_id": "task_789"
+  "focus_areas": [
+    {
+      "name": "Machine Learning",
+      "mention_count": 45,
+      "sample_notes": ["research/ml-paper.md", "projects/ml-pipeline.md"]
+    }
+  ],
+  "bridge_concepts": [
+    {
+      "name": "Data Pipeline",
+      "connected_areas": ["ML", "Engineering"],
+      "strength": 8.5
+    }
+  ],
+  "isolated_areas": [
+    {
+      "name": "Quantum Computing",
+      "note_count": 3,
+      "suggestion": "ML 또는 Physics 주제에 연결 권장"
+    }
+  ],
+  "time_trends": {
+    "emerging": ["LLM Fine-tuning", "RAG"],
+    "declining": ["Web3"]
+  },
+  "health_score": {
+    "overall": 78,
+    "connection_density": 0.65,
+    "isolation_ratio": 0.12
+  }
+}
+```
+
+### 3.5 Temporal API
+
+#### GET `/temporal/insights/stale`
+
+**파라미터**
+- `days` (선택, 기본값: 30): 일수 기준
+
+**응답**
+```json
+{
+  "stale_entities": [
+    {
+      "uuid": "uuid-123",
+      "name": "Docker 배포",
+      "pkm_type": "Topic",
+      "last_mentioned": "2024-10-15T00:00:00Z",
+      "days_since_mention": 54,
+      "related_notes_count": 5
+    }
+  ],
+  "total_stale": 12,
+  "recommendation": "이 잊혀진 주제들을 검토하고 업데이트하세요"
 }
 ```
 
 ---
 
-## 4. 데이터 흐름 (Data Flow)
+## 4. 데이터 플로우
 
-### 4.1 노트 동기화 플로우
+### 4.1 Note 동기화 플로우
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant Plugin as Obsidian Plugin
-    participant API as FastAPI
-    participant LLM as OpenAI
-    participant DB as Neo4j
+```
+1. 사용자가 Obsidian에서 노트 저장
+       ↓
+2. 플러그인이 POST /notes/sync 전송
+       ↓
+3. 백엔드가 Graphiti로 처리
+   - Episode 생성
+   - Entity 자동 추출
+   - 이중 시간 타임스탬프
+       ↓
+4. Hybrid Service가 PKM 라벨 추가
+   - 규칙 기반 분류 (~95%)
+   - GPT-5-Mini fallback (~5%)
+       ↓
+5. Entity가 Neo4j에 저장:
+   - name, summary
+   - pkm_type 라벨
+   - name_embedding 벡터
+       ↓
+6. 플러그인에 응답 반환
+```
 
-    User->>Plugin: 노트 저장
-    Plugin->>API: POST /notes/sync
-    API->>API: 노트 해시 체크 (변경 확인)
-    
-    alt 노트 변경됨
-        API->>LLM: extract_ontology(content, metadata)
-        LLM-->>API: JSON (topics, projects, tasks...)
-        API->>DB: MERGE Note
-        API->>DB: MERGE Topics/Projects/Tasks
-        API->>DB: CREATE Relationships
-        DB-->>API: Success
-        API-->>Plugin: {status: "ok"}
-        Plugin->>API: GET /notes/context/{note_id}
-        API->>DB: MATCH context
-        DB-->>API: Context data
-        API-->>Plugin: Context JSON
-        Plugin->>User: Context Panel 업데이트
-    else 노트 변경 없음
-        API-->>Plugin: {status: "unchanged"}
-    end
+### 4.2 Vault Graph 데이터 플로우
+
+```
+1. 플러그인이 GET /vault/entity-clusters 요청
+       ↓
+2. 백엔드가 Neo4j에서 엔티티 조회
+   MATCH (e:Entity)
+   WHERE e.group_id = $vault_id
+   RETURN e
+       ↓
+3. pkm_type으로 엔티티 그룹화 (8 클러스터)
+       ↓
+4. 엔티티 간 RELATES_TO 엣지 조회
+       ↓
+5. 각 엣지에 대해 시맨틱 타입 추론:
+   (from_type, to_type) → PKM_EDGE_TYPE_MATRIX → semantic_type
+       ↓
+6. 클러스터 + 시맨틱 엣지를 플러그인에 반환
+       ↓
+7. 플러그인이 vis-network로 렌더링
 ```
 
 ---
 
-### 4.2 컨텍스트 생성 로직
+## 5. 인덱스 및 제약조건
 
-```python
-def get_note_context(note_id: str, user_id: str) -> Dict:
-    """
-    Neo4j Cypher 쿼리를 통해 노트 컨텍스트 생성
-    """
-    # 1. 직접 연결된 Topics
-    topics = get_topics_for_note(note_id)
-    
-    # 2. 관련 Projects
-    projects = get_projects_for_note(note_id)
-    
-    # 3. 포함된 Tasks
-    tasks = get_tasks_in_note(note_id)
-    
-    # 4. 유사한 노트 (Topic 기반)
-    related_notes = find_similar_notes(note_id, limit=5)
-    
-    return {
-        "topics": topics,
-        "projects": projects,
-        "tasks": tasks,
-        "related_notes": related_notes
-    }
-```
+### 5.1 Neo4j 인덱스
 
-**Cypher 쿼리 예시**
 ```cypher
-// 관련 노트 찾기 (공통 Topic 기반)
-MATCH (n:Note {note_id: $note_id})-[:MENTIONS]->(t:Topic)<-[:MENTIONS]-(related:Note)
-WHERE n <> related
-WITH related, COUNT(t) as common_topics
-ORDER BY common_topics DESC
-LIMIT 5
-RETURN related.note_id, related.title, related.path, common_topics
+// 시맨틱 검색용 벡터 인덱스
+CREATE VECTOR INDEX entity_embedding FOR (e:Entity) ON e.name_embedding
+OPTIONS {indexConfig: {
+  `vector.dimensions`: 1536,
+  `vector.similarity_function`: 'cosine'
+}}
+
+// 유니크 제약조건
+CREATE CONSTRAINT entity_uuid FOR (e:Entity) REQUIRE e.uuid IS UNIQUE
+CREATE CONSTRAINT note_id FOR (n:Note) REQUIRE n.note_id IS UNIQUE
+
+// 성능 인덱스
+CREATE INDEX entity_pkm_type FOR (e:Entity) ON (e.pkm_type)
+CREATE INDEX entity_group_id FOR (e:Entity) ON (e.group_id)
+CREATE INDEX note_updated FOR (n:Note) ON (n.updated_at)
 ```
+
+### 5.2 Graphiti 인덱스
+
+Graphiti가 자동 생성:
+- `entity_name_idx` - Entity 이름 풀텍스트 검색
+- `episodic_reference_time_idx` - 시간 쿼리
+- `edge_valid_at_idx` - 이중 시간 엣지 쿼리
 
 ---
 
-## 5. 확장 가능성
+## 6. PKM 타입 색상 스키마
 
-### 5.1 향후 추가 노드
-- `(:Meeting)` - 회의 노트 특화
-- `(:Reference)` - 논문/책 참조
-- `(:Insight)` - 중요한 인사이트 자동 추출
-
-### 5.2 향후 추가 관계
-- `(:Topic)-[:EVOLVES_TO]->(:Topic)` - 개념 진화
-- `(:Note)-[:CONTRADICTS]->(:Note)` - 모순 감지
-- `(:Project)-[:DEPENDS_ON]->(:Project)` - 프로젝트 의존성
-
-### 5.3 벡터 검색 통합
-```cypher
-// Neo4j Vector Index 활용
-CALL db.index.vector.queryNodes(
-  'note_embeddings', 
-  $query_vector, 
-  10
-) YIELD node, score
-RETURN node.title, node.path, score
-```
+| PKM 타입 | 색상 | Hex |
+|----------|------|-----|
+| Goal | 빨강 | `#E74C3C` |
+| Project | 주황 | `#E67E22` |
+| Task | 노랑 | `#F1C40F` |
+| Topic | 초록 | `#2ECC71` |
+| Concept | 청록 | `#1ABC9C` |
+| Question | 파랑 | `#3498DB` |
+| Insight | 보라 | `#9B59B6` |
+| Resource | 회색 | `#95A5A6` |
 
 ---
 
-## 6. 성능 최적화
+## 7. 보안 & 프라이버시
 
-### 6.1 인덱스 전략
-```cypher
-// Note 검색 최적화
-CREATE INDEX note_id_idx FOR (n:Note) ON (n.note_id);
-CREATE INDEX note_updated_idx FOR (n:Note) ON (n.updated_at);
+### 7.1 인증
+- API 인증용 JWT 토큰
+- 만료 시 토큰 갱신
 
-// Topic 검색 최적화
-CREATE INDEX topic_name_idx FOR (t:Topic) ON (t.name);
-CREATE FULLTEXT INDEX topic_description FOR (t:Topic) ON EACH [t.description];
+### 7.2 데이터 격리
+- 모든 쿼리가 `vault_id`로 필터링
+- 사용자는 자신의 볼트만 접근 가능
 
-// Project 상태별 조회
-CREATE INDEX project_status_idx FOR (p:Project) ON (p.status);
-```
-
-### 6.2 캐싱 전략
-- Redis 캐시: Context API 응답 (TTL: 5분)
-- 로컬 캐시: 플러그인에서 최근 조회 노트 (메모리)
+### 7.3 프라이버시 옵션
+- **Full 모드**: 전체 콘텐츠 전송
+- **Summary 모드**: 요약만 전송
+- **Metadata 모드**: 태그와 링크만
+- **제외 폴더**: 비공개 폴더 건너뛰기
 
 ---
 
-이 IA 문서는 개발자가 시스템을 구현할 때 필요한 모든 정보 구조를 담고 있습니다.
+**문서 버전**: 4.0
+**최종 검토**: 2025-12-08
