@@ -866,11 +866,13 @@ def get_cluster_detail(
     WHERE e.uuid IN $uuids
     OPTIONAL MATCH (e)-[r:RELATES_TO]-(other:Entity)
     WHERE other.uuid IN $uuids
+    OPTIONAL MATCH (n:Note)-[:MENTIONS]->(e)
     RETURN e.uuid as uuid,
            e.name as name,
            e.summary as summary,
            e.pkm_type as pkm_type,
-           count(r) as internal_connections
+           count(DISTINCT r) as internal_connections,
+           collect(DISTINCT n.note_id)[..5] as connected_notes
     ORDER BY internal_connections DESC
     """
 
@@ -883,7 +885,8 @@ def get_cluster_detail(
             "name": row["name"],
             "summary": row.get("summary", ""),
             "pkm_type": row.get("pkm_type", "Topic"),
-            "connections": row.get("internal_connections", 0)
+            "connections": row.get("internal_connections", 0),
+            "connected_notes": row.get("connected_notes", [])
         })
 
     # 내부 RELATES_TO 관계들 (PKM Type 포함 - Semantic Edge 추론용)

@@ -592,31 +592,40 @@ export class DidymosGraphView extends ItemView {
     if (!this.folderSelectEl) return;
 
     try {
-      const foldersData = await this.api.fetchVaultFolders(this.settings.vaultId);
-      this.availableFolders = foldersData.folders;
+      // Use local vault scan primarily (User Request)
+      const allFiles = this.app.vault.getMarkdownFiles();
+      const folderMap = new Map<string, number>();
 
-      // UI 업데이트
+      allFiles.forEach(file => {
+        if (file.path.includes("/")) {
+          const rootFolder = file.path.split("/")[0];
+          folderMap.set(rootFolder, (folderMap.get(rootFolder) || 0) + 1);
+        }
+      });
+
+      const folders = Array.from(folderMap.entries())
+        .map(([folder, count]) => ({ folder, note_count: count }))
+        .sort((a, b) => b.note_count - a.note_count);
+
+      this.availableFolders = folders;
+
+      // UI Update
       this.folderSelectEl.empty();
 
-      if (this.availableFolders.length === 0) {
-        this.folderSelectEl.createEl("span", { text: "No folders found", cls: "didymos-folder-empty" });
-        return;
-      }
-
-      // "All Folders" 옵션
+      // "All Folders" Option
       const allLabel = this.folderSelectEl.createEl("label", { cls: "didymos-folder-option" });
       const allCheckbox = allLabel.createEl("input", { type: "checkbox" });
       allCheckbox.checked = this.selectedFolders.length === 0;
-      allLabel.createSpan({ text: `All (${foldersData.folders.reduce((sum, f) => sum + f.note_count, 0)} notes)` });
+      allLabel.createSpan({ text: `All Folders (${folders.reduce((sum, f) => sum + f.note_count, 0)})` });
 
       allCheckbox.addEventListener("change", async () => {
         if (allCheckbox.checked) {
           this.selectedFolders = [];
-          // 다른 체크박스 해제
+          // Uncheck others
           this.folderSelectEl?.querySelectorAll("input[type='checkbox']").forEach((cb: HTMLInputElement) => {
             if (cb !== allCheckbox) cb.checked = false;
           });
-          // 2nd Brain 모드면 Entity Clusters, 아니면 Vault Graph
+          // Refresh graph
           if (this.viewMode === "entity-clusters") {
             await this.renderEntityClustersGraph();
           } else {
@@ -967,9 +976,9 @@ export class DidymosGraphView extends ItemView {
             }
           },
           font: {
-            size: 14,
+            size: 42, // Increased 3x (14 -> 42)
             color: '#333333',
-            strokeWidth: 3,
+            strokeWidth: 4,
             strokeColor: '#ffffff'
           },
           title: `📦 ${cluster.name}\n\n` +
@@ -998,7 +1007,7 @@ export class DidymosGraphView extends ItemView {
         // Filter out 'INTER_CLUSTER' or 'inter_cluster' labels
         label: (edge.label && edge.label.toLowerCase() !== 'inter_cluster') ? edge.label :
           (edge.relation_type && edge.relation_type.toLowerCase() !== 'inter_cluster' ? edge.relation_type : ''),
-        font: { align: 'middle', background: 'white', size: 10, strokeWidth: 0 },
+        font: { align: 'middle', background: 'white', size: 30, strokeWidth: 0 },
         arrows: {}
       }));
 
@@ -1054,9 +1063,9 @@ export class DidymosGraphView extends ItemView {
         enabled: true,
         solver: 'forceAtlas2Based',
         forceAtlas2Based: {
-          gravitationalConstant: -2500, // Stronger repulsion for better spacing
-          centralGravity: 0.005,      // Weaker central gravity to allow spreading
-          springLength: 250,          // Longer springs
+          gravitationalConstant: -500, // Reduced from -2500 per user request
+          centralGravity: 0.005,
+          springLength: 250,
           springConstant: 0.04,
           damping: 0.4
         },
@@ -1470,17 +1479,21 @@ export class DidymosGraphView extends ItemView {
     meta.createEl("div", { cls: "stat-item" }).createSpan({ text: `Type: ${entityData.pkm_type || 'Topic'}` });
     meta.createEl("div", { cls: "stat-item" }).createSpan({ text: `Mentions: ${entityData.mention_count || 0}` });
 
-    // Connected Notes (if available)
+    // Connected Notes
     if (entityData.connected_notes && entityData.connected_notes.length > 0) {
-      content.createEl("h4", { text: "Connected Notes" });
-      const ul = content.createEl("ul");
-      entityData.connected_notes.slice(0, 10).forEach((path: string) => {
+      content.createEl("h4", { text: "Connected Notes", cls: "didymos-detail-section-title" });
+      const ul = content.createEl("ul", { cls: "didymos-detail-note-list" });
+      entityData.connected_notes.forEach((path: string) => {
+        const filename = path.split("/").pop();
         const li = ul.createEl("li");
-        li.createEl("a", { text: path.split("/").pop(), href: "#" }).addEventListener("click", async (e) => {
-          e.preventDefault();
-          await this.app.workspace.openLinkText(path, "", false);
-        });
+        li.createEl("a", { text: filename, href: "#", cls: "didymos-note-link" })
+          .addEventListener("click", async (e) => {
+            e.preventDefault();
+            await this.app.workspace.openLinkText(path, "", false);
+          });
       });
+    } else {
+      content.createEl("p", { text: "No directly connected notes found.", cls: "didymos-detail-empty" });
     }
   }
 
