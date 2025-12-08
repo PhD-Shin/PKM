@@ -798,6 +798,8 @@ export class DidymosAPI {
     url.searchParams.set("vault_id", vaultId);
     url.searchParams.set("user_token", this.settings.userToken);
 
+
+
     if (options?.folderPrefix) {
       url.searchParams.set("folder_prefix", options.folderPrefix);
     }
@@ -946,6 +948,14 @@ export interface HealthScore {
   recommendations: string[];
 }
 
+
+export interface PriorityTask {
+  uuid: string;
+  name: string;
+  context: string;
+  importance: number;
+}
+
 export interface ThinkingInsightsData {
   status: string;
   summary: {
@@ -963,4 +973,5 @@ export interface ThinkingInsightsData {
   exploration_suggestions: ExplorationSuggestion[];
   time_trends?: TimeTrends;
   health_score?: HealthScore;
+  priority_tasks?: PriorityTask[];
 }

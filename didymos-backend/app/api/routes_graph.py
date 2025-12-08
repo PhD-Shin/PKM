@@ -1721,6 +1721,46 @@ async def get_thinking_insights(
             "recommendations": health_recommendations
         }
 
+        # 4. 우선순위 태스크 (Priority Tasks): Goal/Project와 연결된 태스크
+        cypher_tasks = f"""
+        MATCH (t:Entity)
+        WHERE {folder_condition} t.pkm_type = 'Task'
+        OPTIONAL MATCH (t)<-[:REQUIRES]-(p:Entity)
+        WHERE p.pkm_type = 'Project'
+        OPTIONAL MATCH (p)<-[:ACHIEVED_BY]-(g:Entity)
+        WHERE g.pkm_type = 'Goal'
+        WITH t, p, g, count((t)<-[]-()) as total_connections
+        RETURN t.uuid as uuid,
+               t.name as name,
+               p.name as project,
+               g.name as goal,
+               total_connections
+        ORDER BY 
+            CASE WHEN g IS NOT NULL THEN 2 
+                 WHEN p IS NOT NULL THEN 1 
+                 ELSE 0 END DESC,
+            total_connections DESC
+        LIMIT 10
+        """
+
+        tasks_result = client.query(cypher_tasks, params)
+        priority_tasks = []
+        for row in tasks_result or []:
+            context = ""
+            if row["goal"]:
+                context = f"Goal: {row['goal']}"
+            elif row["project"]:
+                context = f"Project: {row['project']}"
+            else:
+                context = "No Context"
+            
+            priority_tasks.append({
+                "uuid": row["uuid"],
+                "name": row["name"],
+                "context": context,
+                "importance": row["total_connections"]
+            })
+
         # 전체 통계
         total_entities = sum(t["entity_count"] for t in type_distribution.values())
         total_notes = max(t["note_count"] for t in type_distribution.values()) if type_distribution else 0
@@ -1741,7 +1781,8 @@ async def get_thinking_insights(
             "isolated_areas": isolated_areas,
             "exploration_suggestions": exploration_suggestions,
             "time_trends": time_trends,
-            "health_score": health_score
+            "health_score": health_score,
+            "priority_tasks": priority_tasks
         }
 
     except Exception as e:

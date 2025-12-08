@@ -2713,6 +2713,30 @@ export class DidymosGraphView extends ItemView {
         }
       }
 
+      // 1.5 Priority Tasks (Top Priority)
+      if (this.insightsData.priority_tasks && this.insightsData.priority_tasks.length > 0) {
+        const taskSection = contentEl.createEl("div", { cls: "didymos-insights-section priority-tasks" });
+        taskSection.createEl("h4", { text: "🚀 Top Priority Tasks" });
+        const taskList = taskSection.createEl("ul", { cls: "didymos-task-list" });
+
+        this.insightsData.priority_tasks.forEach((task: any) => {
+          const li = taskList.createEl("li", { cls: "didymos-task-item" });
+          li.style.marginBottom = "8px";
+
+          if (task.context && task.context !== "No Context") {
+            const contextSpan = li.createSpan({ text: `${task.context}`, cls: "task-context" });
+            contextSpan.style.display = "block";
+            contextSpan.style.fontSize = "0.85em";
+            contextSpan.style.color = "#888";
+            contextSpan.style.marginBottom = "2px";
+          }
+          const nameSpan = li.createSpan({ text: `☐ ${task.name}`, cls: "task-name" });
+          nameSpan.style.fontWeight = "bold";
+          nameSpan.style.cursor = "pointer";
+          // TODO: Link to note if possible
+        });
+      }
+
       // 2. 집중 영역 (Focus Areas) - 클릭하면 노트 열기
       const focusSection = contentEl.createEl("div", { cls: "didymos-insights-section" });
       focusSection.createEl("h4", { text: "Focus Areas" });
