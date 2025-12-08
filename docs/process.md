@@ -3,8 +3,8 @@
 > Obsidian을 위한 PKM 시맨틱 온톨로지 시스템
 
 **최종 수정**: 2025-12-08
-**상태**: Phase 16 완료 - 프로덕션 준비 완료
-**핵심 아키텍처**: Graphiti + PKM 8타입 온톨로지 + 시맨틱 엣지 타입
+**상태**: Phase 17 완료 - 리팩토링 및 시각화 고도화
+**핵심 아키텍처**: Graphiti + PKM 8타입 온톨로지 + Service-Oriented (Refactored)
 
 ---
 
@@ -287,6 +287,8 @@ CREATE CONSTRAINT FOR (n:Note) REQUIRE n.note_id IS UNIQUE
 | 14 | ToolsRetriever | `routes_search.py` |
 | 15 | Thinking Insights | `routes_graph.py` |
 | 16 | PKM Core v2 (8 Types) | `hybrid_graphiti_service.py` |
+| 17 | Code Refactoring | `NoteService` (Py), `SyncService` (TS) 분리 |
+| 17+ | Visualization Polish | Semantic Edge Labels, Interactive Modal |
 | 16+ | 시맨틱 엣지 타입 | `entity_cluster_service.py` |
 
 ---
@@ -307,6 +309,20 @@ CREATE CONSTRAINT FOR (n:Note) REQUIRE n.note_id IS UNIQUE
   }
 }
 ```
+
+### 배포 워크플로우 (중요)
+
+Didymos는 하이브리드 아키텍처이므로 다음 사항을 주의해야 합니다:
+
+1.  **로컬 개발 (Python)**: 로컬에서 `didymos-backend`의 Python 코드를 수정해도,
+2.  **원격 서버 (Railway)**: Railway에서 실행 중인 서버에는 즉시 반영되지 않습니다.
+3.  **반영 방법**:
+    ```bash
+    git add .
+    git commit -m "Update backend logic"
+    git push origin main
+    # -> Railway가 GitHub Push를 감지하고 자동으로 재배포 (약 2분 소요)
+    ```
 
 ### 환경 변수
 

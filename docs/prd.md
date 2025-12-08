@@ -3,7 +3,7 @@
 > AI 기반 Obsidian 2nd Brain - PKM 시맨틱 온톨로지 + 시간 지식 그래프
 
 **최종 수정**: 2025-12-08
-**현재 상태**: Phase 16 완료 (PKM Core Ontology v2 + Semantic Edge Types)
+**현재 상태**: Phase 17 완료 (Refactoring & Graph Visualization Polish)
 **비즈니스 모델**: Obsidian 플러그인 구독 ($7-15/월)
 **핵심 기술**: Graphiti (저장/추출) + PKM 시맨틱 엣지 타입
 
@@ -117,6 +117,12 @@ After (시맨틱):
 - **어떻게** 연결되는지 (시맨틱 엣지 타입)
 - **무엇을 해야 하는지** (Goal → Project → Task 계층)
 
+### 1.4 인터랙티브 시각화 (New)
+
+- **엔티티 클릭**: 상세 패널(Modal) 표시 (요약, 타입, 멘션 수, 연결된 노트)
+- **노드 간격**: 물리학(Physics) 기반으로 노드 간 충분한 간격 확보 (Sticky 현상 제거)
+- **라벨 가시성**: `inter_cluster` 등 기계적 라벨 제거, 의미 있는 관계만 표시
+
 ---
 
 ## 2. 기술 아키텍처
@@ -193,6 +199,9 @@ After (시맨틱):
 | `entity_cluster_service.py` | 시맨틱 엣지 추론 | PKM 타입 쌍에서 엣지 타입 추론 |
 | `graphiti_service.py` | 코어 저장소 | Graphiti Episode 처리, 이중 시간 |
 | `cluster_service.py` | 클러스터 계산 | UMAP + HDBSCAN, LLM 요약 |
+| `note_service.py` | 노트 관리 | (Refactored) 노트 동기화 및 생명주기 관리 |
+| `sync_service.ts` | Obsidian Sync | (Frontend) 노트 변경사항 감지 및 동기화 담당 |
+| `ontology_service.ts` | 온톨로지 | (Frontend) 온톨로지 데이터 관리 및 내보내기 |
 
 ---
 
@@ -326,6 +335,8 @@ POST /temporal/search
 - **605개 엣지** - 시맨틱 타입 추론 적용
 - **50+ 시맨틱 엣지 타입** (ACHIEVED_BY, REQUIRES, CONTAINS 등)
 - **폴더 기반 필터링** - 컨텍스트 분리
+- **개선된 UX** - 인터랙티브 엔티티 클릭, 최적화된 그래프 레이아웃
+- **안정성** - 주요 로직을 독립적인 Service로 리팩토링 (`NoteService`, `SyncService` 등)
 
 ### 5.3 향후 로드맵
 
